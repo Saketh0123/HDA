@@ -1,0 +1,13 @@
+{
+  "name": "eduhub-tools",
+  "private": true,
+  "scripts": {
+    "purge": "node purgeFirestore.js",
+    "set-admin": "node setAdminClaim.js",
+    "rebuild-counter": "node rebuildAdmissionCounter.js",
+    "reset-admin": "node resetAdminPanelData.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.1.0"
+  }
+}

@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == 'admin';
+    }
+
+    function isStudent() {
+      return isSignedIn() && request.auth.token.role == 'student';
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Students: students/{uid}
+    match /students/{userId} {
+      allow read: if isAdmin() || (isStudent() && isOwner(userId));
+      allow write: if isAdmin();
+    }
+
+    // Fees: fees/{uid}
+    match /fees/{userId} {
+      allow read: if isAdmin() || (isStudent() && isOwner(userId));
+      allow write: if isAdmin();
+    }
+
+    // Accounts: accounts/summary (single doc)
+    match /accounts/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Statistics: statistics/{auto}
+    match /statistics/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Logs (audit): logs/{auto}
+    match /logs/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

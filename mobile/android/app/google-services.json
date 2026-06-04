@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "388271354551",
+    "project_id": "hdaapp-38a02",
+    "storage_bucket": "hdaapp-38a02.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:388271354551:android:3da1aa378f18573e719332",
+        "android_client_info": {
+          "package_name": "com.example.eduhub_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA9jW1oBenzr8T68rMKWYzza2nYRc99_18"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
