@@ -424,7 +424,13 @@ function AdminLogin({ error }) {
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err) {
-      setLocalError('Invalid credentials or account not configured.');
+      const code = typeof err?.code === 'string' ? err.code : '';
+      const message = typeof err?.message === 'string' ? err.message : '';
+      if (code) {
+        setLocalError(`${code}${message ? `: ${message}` : ''}`);
+      } else {
+        setLocalError('Login failed.');
+      }
     } finally {
       setLoading(false);
     }
