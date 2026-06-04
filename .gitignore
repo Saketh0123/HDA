@@ -27,3 +27,7 @@ mobile/pubspec.lock
 
 # Firebase local
 .firebase/
+functions/firebase-debug.log
+functions/firebase-debug.*.log
+firebase-debug.log
+firebase-debug.*.log
