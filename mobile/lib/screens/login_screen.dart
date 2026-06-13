@@ -87,7 +87,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   bool _loading = false;
   bool _obscure = true;
   bool _otpSent = false;
-  String? _maskedEmail;
 
   late AnimationController _anim;
   late Animation<double> _fade;
@@ -230,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   void _back() {
     setState(() {
       _state = _UiState.signIn;
-      _otpSent = false; _maskedEmail = null;
+      _otpSent = false;
       _passwordCtrl.clear(); _otpCtrl.clear();
       _emailCtrl.clear(); _newPassCtrl.clear(); _confirmPassCtrl.clear();
     });
@@ -361,7 +360,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     try {
       final masked = await _backend.requestPasswordResetOtpByEmail(email: email);
       if (!mounted) return;
-      setState(() { _otpSent = true; _maskedEmail = masked; });
+      setState(() { _otpSent = true; });
       await showBeautifulDialog(context,
         icon: Icons.mark_email_read_outlined,
         iconColor: AppTheme.successColor,
@@ -518,12 +517,28 @@ class VerifyEmailScreen extends StatefulWidget {
 
 class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   final _emailCtrl = TextEditingController();
-  final _otpCtrl = TextEditingController();
+  // 6-box OTP controllers
+  final List<TextEditingController> _otpBoxCtrls =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _otpFocusNodes =
+      List.generate(6, (_) => FocusNode());
+
   bool _loading = false, _otpSent = false;
   String? _masked;
 
   @override
-  void dispose() { _emailCtrl.dispose(); _otpCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _emailCtrl.dispose();
+    for (final c in _otpBoxCtrls) {
+      c.dispose();
+    }
+    for (final f in _otpFocusNodes) {
+      f.dispose();
+    }
+    super.dispose();
+  }
+
+  String get _otpValue => _otpBoxCtrls.map((c) => c.text).join();
 
   Future<void> _back() async {
     try { await widget.backend.signOut(); } catch (_) {}
@@ -558,17 +573,77 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   }
 
   Future<void> _verify() async {
+    final otp = _otpValue.trim();
+    if (otp.length < 6) {
+      await showBeautifulDialog(context,
+        icon: Icons.lock_clock_outlined, iconColor: AppTheme.warningColor,
+        title: 'Incomplete OTP', message: 'Please enter all 6 digits.');
+      return;
+    }
     setState(() => _loading = true);
     try {
-      await widget.backend.verifyEmailWithOtp(email: _emailCtrl.text.trim(), otpCode: _otpCtrl.text.trim());
+      await widget.backend.verifyEmailWithOtp(
+          email: _emailCtrl.text.trim(), otpCode: otp);
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => ChangePasswordScreen(backend: widget.backend)));
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => ChangePasswordScreen(backend: widget.backend)));
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      await showBeautifulDialog(context, icon: Icons.error_outline_rounded, iconColor: AppTheme.alertColor, title: 'Error', message: e.message ?? 'Verification failed.');
+      await showBeautifulDialog(context,
+          icon: Icons.error_outline_rounded, iconColor: AppTheme.alertColor,
+          title: 'Error', message: e.message ?? 'Verification failed.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Widget _buildOtpBoxes() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(6, (i) {
+        return Container(
+          width: 46, height: 56,
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          child: TextField(
+            controller: _otpBoxCtrls[i],
+            focusNode: _otpFocusNodes[i],
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.number,
+            maxLength: 1,
+            style: const TextStyle(
+              fontSize: 22, fontWeight: FontWeight.w800,
+              color: AppTheme.indigoDeep,
+            ),
+            decoration: InputDecoration(
+              counterText: '',
+              filled: true,
+              fillColor: AppTheme.surfaceColor,
+              contentPadding: EdgeInsets.zero,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.borderColor, width: 1.5),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.borderColor, width: 1.5),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2.5),
+              ),
+            ),
+            onChanged: (v) {
+              if (v.length == 1 && i < 5) {
+                _otpFocusNodes[i + 1].requestFocus();
+              } else if (v.isEmpty && i > 0) {
+                _otpFocusNodes[i - 1].requestFocus();
+              }
+              setState(() {});
+            },
+          ),
+        );
+      }),
+    );
   }
 
   @override
@@ -578,27 +653,77 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       appBar: AppBar(
         backgroundColor: AppTheme.indigoDeep,
         elevation: 0,
-        leading: IconButton(onPressed: _loading ? null : _back, icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white)),
-        title: const Text('Verify Email', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        leading: IconButton(
+            onPressed: _loading ? null : _back,
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white)),
+        title: const Text('Verify Email',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 8),
-            _Field(ctrl: _emailCtrl, hint: 'Email address', icon: Icons.email_outlined, keyboard: TextInputType.emailAddress),
-            if (_otpSent) ...[
-              const SizedBox(height: 14),
-              _Field(ctrl: _otpCtrl, hint: 'OTP Code', icon: Icons.lock_clock_outlined, keyboard: TextInputType.number),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Icon
+              Center(
+                child: Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _otpSent ? Icons.lock_clock_outlined : Icons.email_outlined,
+                    color: AppTheme.primaryColor, size: 34,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                _otpSent ? 'Enter OTP' : 'Verify Email',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 22, fontWeight: FontWeight.w800, color: AppTheme.indigoDeep,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _otpSent
+                    ? 'Enter the 6-digit code sent to ${_masked ?? 'your email'}'
+                    : 'Enter your registered email to receive an OTP',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 13, color: AppTheme.textSecondary, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              if (!_otpSent) ...[
+                _Field(
+                    ctrl: _emailCtrl,
+                    hint: 'Email address',
+                    icon: Icons.email_outlined,
+                    keyboard: TextInputType.emailAddress),
+              ] else ...[
+                _buildOtpBoxes(),
+              ],
+              const SizedBox(height: 28),
+              _IndigoButton(
+                label: _otpSent ? 'Verify OTP' : 'Send OTP',
+                loading: _loading,
+                onPressed: _loading ? null : (_otpSent ? _verify : _send),
+              ),
+              if (_otpSent) ...[
+                const SizedBox(height: 14),
+                TextButton(
+                  onPressed: _loading ? null : _send,
+                  child: const Text('Resend OTP',
+                      style: TextStyle(
+                          color: AppTheme.primaryColor, fontWeight: FontWeight.w600)),
+                ),
+              ],
             ],
-            const SizedBox(height: 24),
-            _IndigoButton(
-              label: _otpSent ? 'Verify OTP' : 'Send OTP',
-              loading: _loading,
-              onPressed: _loading ? null : (_otpSent ? _verify : _send),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -649,20 +774,62 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
         backgroundColor: AppTheme.indigoDeep, elevation: 0,
-        title: const Text('Set New Password', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        title: const Text('Set New Password',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _Field(ctrl: _p1, hint: 'New Password', icon: Icons.lock_outline_rounded, obscure: _obscure,
-              suffix: IconButton(icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: AppTheme.textSecondary, size: 20), onPressed: () => setState(() => _obscure = !_obscure))),
-            const SizedBox(height: 14),
-            _Field(ctrl: _p2, hint: 'Confirm Password', icon: Icons.lock_outline_rounded, obscure: _obscure),
-            const SizedBox(height: 28),
-            _IndigoButton(label: _saving ? 'Saving…' : 'Save Password', loading: _saving, onPressed: _saving ? null : _save),
-          ],
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Icon
+              Center(
+                child: Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.lock_reset_rounded,
+                      color: AppTheme.primaryColor, size: 34),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('Set New Password',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w800,
+                    color: AppTheme.indigoDeep),
+              ),
+              const SizedBox(height: 6),
+              const Text('Choose a strong password (min. 8 characters)',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13, color: AppTheme.textSecondary, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              _Field(
+                  ctrl: _p1, hint: 'New Password',
+                  icon: Icons.lock_outline_rounded, obscure: _obscure,
+                  suffix: IconButton(
+                    icon: Icon(
+                        _obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                        color: AppTheme.textSecondary, size: 20),
+                    onPressed: () => setState(() => _obscure = !_obscure),
+                  )),
+              const SizedBox(height: 14),
+              _Field(
+                  ctrl: _p2, hint: 'Confirm Password',
+                  icon: Icons.lock_outline_rounded, obscure: _obscure),
+              const SizedBox(height: 28),
+              _IndigoButton(
+                  label: _saving ? 'Saving…' : 'Save Password',
+                  loading: _saving,
+                  onPressed: _saving ? null : _save),
+            ],
+          ),
         ),
       ),
     );

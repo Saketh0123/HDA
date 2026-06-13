@@ -96,23 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _yearLabel(String year) =>
       year == '2' ? '2nd Year' : year == '1' ? '1st Year' : year;
 
-  String _gradeForPercent(int p) {
-    if (p >= 90) return 'A+';
-    if (p >= 80) return 'A';
-    if (p >= 70) return 'B+';
-    if (p >= 60) return 'B';
-    return 'C';
-  }
 
-  Color _colorForSubject(String s) {
-    switch (s.toLowerCase()) {
-      case 'physics': return AppTheme.primaryColor;
-      case 'chemistry': return AppTheme.accentColor;
-      case 'mathematics': return const Color(0xFFA855F7);
-      case 'biology': return AppTheme.warningColor;
-      default: return AppTheme.primaryColor;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -131,8 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final studentStream =
         FirebaseFirestore.instance.collection('students').doc(uid).snapshots();
-    final feesStream =
-        FirebaseFirestore.instance.collection('fees').doc(uid).snapshots();
 
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: studentStream,
@@ -173,7 +155,6 @@ class _HomeScreenState extends State<HomeScreen> {
             : const <dynamic>[];
 
         int totalScore = 0, totalMax = 0;
-        final subjectPerf = <_SubjectPerf>[];
         for (final m in marks) {
           if (m is! Map) continue;
           final subj = (m['subject'] as String?) ?? '';
@@ -182,18 +163,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final maxScore = _asInt(m['maxScore'], fallback: 100);
           totalScore += score;
           totalMax += maxScore;
-          final pct = maxScore > 0 ? ((score / maxScore) * 100).round() : 0;
-          subjectPerf.add(_SubjectPerf(
-            name: subj, marks: score, maxMarks: maxScore,
-            grade: _gradeForPercent(pct), barColor: _colorForSubject(subj),
-          ));
         }
-        subjectPerf.sort((a, b) {
-          final ap = a.maxMarks > 0 ? a.marks / a.maxMarks : 0;
-          final bp = b.maxMarks > 0 ? b.marks / b.maxMarks : 0;
-          return bp.compareTo(ap);
-        });
-        final topSubjects = subjectPerf.take(3).toList();
         final overallPercent =
             totalMax > 0 ? ((totalScore / totalMax) * 100).round() : 0;
 
@@ -270,25 +240,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         message: latestRemarkMsg.isNotEmpty ? latestRemarkMsg : 'No remarks yet.',
                         meta: latestRemarkMeta,
                       ),
-                      const SizedBox(height: 28),
-                      Row(
-                        children: [
-                          const Expanded(child: _SectionLabel('Subject Performance')),
-                          GestureDetector(
-                            onTap: widget.onViewAllResults,
-                            child: const Text('View all  ›',
-                              style: TextStyle(
-                                color: AppTheme.primaryColor, fontSize: 12, fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      topSubjects.isEmpty
-                          ? const Text('No marks yet.',
-                              style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w600))
-                          : _SubjectPerformanceCard(subjects: topSubjects),
                       const SizedBox(height: 12),
                     ],
                   ),
@@ -617,82 +568,6 @@ class _DetailRow extends StatelessWidget {
 
 
 
-
-class _WaveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, size.height - 30);
-    path.quadraticBezierTo(size.width / 2, size.height + 10, size.width, size.height - 30);
-    path.lineTo(size.width, 0);
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(_WaveClipper old) => false;
-}
-
-// ─── Student Avatar ───────────────────────────────────────────────────────────
-// Renders the student's photo from a URL, with a gradient fallback.
-
-class _StudentAvatar extends StatelessWidget {
-  final String photoUrl;
-  final double size;
-
-  const _StudentAvatar({required this.photoUrl, this.size = 52});
-
-  @override
-  Widget build(BuildContext context) {
-    final url = photoUrl.trim();
-    final ImageProvider? imageProvider = url.startsWith('http') ? NetworkImage(url) : null;
-
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: imageProvider == null ? AppTheme.headerGradient : null,
-        color: imageProvider != null ? AppTheme.borderColor : null,
-        boxShadow: AppTheme.glowPrimary,
-      ),
-      child: ClipOval(
-        child: imageProvider != null
-            ? Stack(
-                fit: StackFit.expand,
-                children: [
-                  ImageFiltered(
-                    imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                    child: Image(
-                      image: imageProvider,
-                      fit: BoxFit.cover,
-                      alignment: Alignment.center,
-                    ),
-                  ),
-                  Image(
-                    image: imageProvider,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.center,
-                    width: size,
-                    height: size,
-                    errorBuilder: (_, __, ___) => _fallbackIcon(size),
-                  ),
-                ],
-              )
-            : _fallbackIcon(size),
-      ),
-    );
-  }
-
-  Widget _fallbackIcon(double sz) {
-    return Container(
-      width: sz, height: sz,
-      decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-      child: Icon(Icons.person_rounded, color: Colors.white, size: sz * 0.52),
-    );
-  }
-}
-
 // ─── Student Avatar Square ────────────────────────────────────────────────────
 // Square version for the new header card layout.
 
@@ -756,77 +631,7 @@ class _StudentAvatarSquare extends StatelessWidget {
 
 // ─── Profile Card ─────────────────────────────────────────────────────────────
 
-class _ProfileCard extends StatelessWidget {
-  final String program, admissionId, photoUrl;
-  final int scorePercent;
 
-  const _ProfileCard({
-    required this.program,
-    required this.admissionId,
-    required this.scorePercent,
-    required this.photoUrl,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppTheme.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusXL),
-        boxShadow: const [AppTheme.shadowMedium],
-        border: Border.all(color: AppTheme.borderColor, width: 0.8),
-      ),
-      child: Row(
-        children: [
-          // Avatar – show student photo if available, else gradient icon
-          _StudentAvatar(photoUrl: photoUrl, size: 56),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(program,
-                  style: const TextStyle(
-                    fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(admissionId,
-                  style: const TextStyle(
-                    fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Score badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              gradient: AppTheme.headerGradient,
-              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-              boxShadow: AppTheme.glowPrimary,
-            ),
-            child: Column(
-              children: [
-                Text('$scorePercent%',
-                  style: const TextStyle(
-                    color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                const Text('Score',
-                  style: TextStyle(fontSize: 10, color: Colors.white70, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ─── Section Label ───────────────────────────────────────────────────────────
 
@@ -916,64 +721,7 @@ class _OverviewCard extends StatelessWidget {
 
 // ─── Fee Card ─────────────────────────────────────────────────────────────────
 
-class _FeeCard extends StatelessWidget {
-  final String label, note;
-  final double progress;
-  final bool paid;
 
-  const _FeeCard({
-    required this.label, required this.note,
-    required this.progress, required this.paid,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = paid ? AppTheme.successColor : AppTheme.primaryColor;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppTheme.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-        boxShadow: const [AppTheme.shadowCard],
-        border: Border.all(color: AppTheme.borderColor, width: 0.8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42, height: 42,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            ),
-            child: Icon(Icons.credit_card_rounded, color: color, size: 20),
-          ),
-          const SizedBox(height: 14),
-          const Text('Fee Status',
-            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 5),
-          Text(label,
-            style: const TextStyle(fontSize: 20, color: AppTheme.textPrimary, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: progress, minHeight: 7,
-              backgroundColor: AppTheme.borderColor,
-              valueColor: AlwaysStoppedAnimation<Color>(color),
-            ),
-          ),
-          const SizedBox(height: 7),
-          Text(note,
-            style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ─── Remark Card ─────────────────────────────────────────────────────────────
 
@@ -1049,116 +797,4 @@ class _RemarkCard extends StatelessWidget {
 
 // ─── Subject Performance ──────────────────────────────────────────────────────
 
-class _SubjectPerf {
-  final String name, grade;
-  final int marks, maxMarks;
-  final Color barColor;
-  const _SubjectPerf({
-    required this.name, required this.marks,
-    required this.maxMarks, required this.grade, required this.barColor,
-  });
-}
 
-class _SubjectPerformanceCard extends StatelessWidget {
-  final List<_SubjectPerf> subjects;
-  const _SubjectPerformanceCard({required this.subjects});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-        boxShadow: const [AppTheme.shadowCard],
-        border: Border.all(color: AppTheme.borderColor, width: 0.8),
-      ),
-      child: Column(
-        children: [
-          for (int i = 0; i < subjects.length; i++) ...[
-            _SubjectRow(subject: subjects[i]),
-            if (i != subjects.length - 1)
-              const Divider(height: 1, color: AppTheme.dividerColor),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SubjectRow extends StatelessWidget {
-  final _SubjectPerf subject;
-  const _SubjectRow({required this.subject});
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = subject.maxMarks > 0
-        ? (subject.marks / subject.maxMarks).clamp(0.0, 1.0)
-        : 0.0;
-    final gradeColor = subject.grade == 'A+' || subject.grade == 'A'
-        ? AppTheme.successColor
-        : subject.grade == 'B+' || subject.grade == 'B'
-            ? AppTheme.warningColor
-            : AppTheme.alertColor;
-
-    return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  color: subject.barColor.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                ),
-                child: Icon(Icons.bookmark_border_rounded, size: 17, color: subject.barColor),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(subject.name,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-                ),
-              ),
-              Text('${subject.marks}/${subject.maxMarks}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
-              ),
-              const SizedBox(width: 10),
-              _GradePill(text: subject.grade, color: gradeColor),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: progress, minHeight: 6,
-              backgroundColor: AppTheme.borderColor,
-              valueColor: AlwaysStoppedAnimation<Color>(subject.barColor),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GradePill extends StatelessWidget {
-  final String text;
-  final Color color;
-  const _GradePill({required this.text, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(text,
-        style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w800),
-      ),
-    );
-  }
-}

@@ -492,10 +492,42 @@ exports.adminCreateAdmission = (0, https_1.onCall)(async (request) => {
     const authEmail = admissionAuthEmail(admissionNumber);
     let userRecord;
     try {
+        // Clean up duplicate auth user if any
+        try {
+            const existingUser = await admin.auth().getUserByEmail(authEmail);
+            firebase_functions_1.logger.info('Deleting existing orphan auth user for admission number', { email: authEmail, uid: existingUser.uid });
+            await admin.auth().deleteUser(existingUser.uid);
+        }
+        catch (err) {
+            if (err.code !== 'auth/user-not-found')
+                throw err;
+        }
         userRecord = await admin.auth().createUser({ email: authEmail, password: DEFAULT_STUDENT_PASSWORD });
     }
     catch (e) {
-        firebase_functions_1.logger.error('Failed to create Auth user for admission', e);
+        firebase_functions_1.logger.error('Failed to create Auth user for admission, rolling back sequence allocation', e);
+        // ROLLBACK: Release the sequence back to the pool
+        try {
+            const counterRef = db.collection('counters').doc('admissions');
+            await db.runTransaction(async (tx) => {
+                const snap = await tx.get(counterRef);
+                const data = snap.exists ? snap.data() : {};
+                const releasedRaw = Array.isArray(data?.released) ? data.released : [];
+                const released = releasedRaw.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+                const nextVal = typeof data?.next === 'number' ? data.next : 1;
+                if (sequence === nextVal - 1) {
+                    tx.set(counterRef, { next: nextVal - 1, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                }
+                else if (!released.includes(sequence)) {
+                    released.push(sequence);
+                    released.sort((a, b) => a - b);
+                    tx.set(counterRef, { released, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                }
+            });
+        }
+        catch (rollbackErr) {
+            firebase_functions_1.logger.error('Rollback of sequence allocation failed', rollbackErr);
+        }
         throw new https_1.HttpsError('internal', 'Failed to create student account.');
     }
     await admin.auth().setCustomUserClaims(userRecord.uid, { role: 'student' });
@@ -692,17 +724,30 @@ exports.adminDeleteStudent = (0, https_1.onCall)(async (request) => {
             }, { merge: true });
         }
         // Release admission sequence back to the pool so it can be reused.
+        // If it was the last sequence (next - 1), decrement next instead of releasing it.
         if (typeof admissionSequence === 'number' && Number.isInteger(admissionSequence) && admissionSequence > 0) {
             const counterData = counterSnap.exists ? counterSnap.data() : {};
-            const releasedRaw = Array.isArray(counterData?.released) ? counterData.released : [];
-            const released = releasedRaw
-                .map((n) => Number(n))
-                .filter((n) => Number.isInteger(n) && n > 0);
-            if (!released.includes(admissionSequence)) {
-                released.push(admissionSequence);
+            const nextVal = typeof counterData.next === 'number' ? counterData.next : 1;
+            if (admissionSequence === nextVal - 1) {
+                const newNext = nextVal - 1;
+                const releasedRaw = Array.isArray(counterData?.released) ? counterData.released : [];
+                const released = releasedRaw
+                    .map((n) => Number(n))
+                    .filter((n) => Number.isInteger(n) && n > 0 && n < newNext);
+                released.sort((a, b) => a - b);
+                tx.set(counterRef, { next: newNext, released, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
             }
-            released.sort((a, b) => a - b);
-            tx.set(counterRef, { released, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            else {
+                const releasedRaw = Array.isArray(counterData?.released) ? counterData.released : [];
+                const released = releasedRaw
+                    .map((n) => Number(n))
+                    .filter((n) => Number.isInteger(n) && n > 0);
+                if (!released.includes(admissionSequence)) {
+                    released.push(admissionSequence);
+                }
+                released.sort((a, b) => a - b);
+                tx.set(counterRef, { released, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            }
         }
         // Delete linked one-off OTP/code docs (ignore if missing).
         tx.delete(emailVerificationCodeRef);
@@ -1098,6 +1143,8 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
         const studentId = assertString(request.data?.studentId, 'studentId');
         const totalFees = assertNonNegative(request.data?.totalFees, 'totalFees');
         const paidAmount = assertNonNegative(request.data?.paidAmount, 'paidAmount');
+        const cautionary = assertNonNegative(request.data?.cautionDeposit ?? 0, 'cautionDeposit');
+        const receiptNo = typeof request.data?.receiptNo === 'string' ? request.data.receiptNo.trim() : '';
         if (paidAmount > totalFees) {
             throw new https_1.HttpsError('invalid-argument', 'paidAmount cannot exceed totalFees.');
         }
@@ -1111,6 +1158,8 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
                 transactionId: typeof historyEntry.transactionId === 'string' && historyEntry.transactionId.trim()
                     ? historyEntry.transactionId.trim()
                     : null,
+                cautionDeposit: cautionary,
+                receiptNo: receiptNo || null,
                 // Firestore does not allow serverTimestamp() sentinels inside arrayUnion().
                 // Use a concrete Timestamp value instead.
                 at: admin.firestore.Timestamp.now(),
@@ -1127,14 +1176,18 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
             const prevTotal = typeof prev?.totalFees === 'number' ? prev.totalFees : 0;
             const prevPaid = typeof prev?.paidAmount === 'number' ? prev.paidAmount : 0;
             const prevPending = typeof prev?.pendingAmount === 'number' ? prev.pendingAmount : prevTotal - prevPaid;
-            const deltaBudget = totalFees - prevTotal;
-            const deltaCollected = paidAmount - prevPaid;
-            const deltaPending = pendingAmount - prevPending;
+            const prevCaution = typeof prev?.cautionDeposit === 'number' ? prev.cautionDeposit : 0;
+            const prevCautionUsed = typeof prev?.cautionDepositUsed === 'number' ? prev.cautionDepositUsed : 0;
+            const deltaBudget = (totalFees - prevTotal) + cautionary;
+            const deltaCollected = (paidAmount - prevPaid) + cautionary;
+            const deltaPending = (totalFees - paidAmount) - (prevTotal - prevPaid);
             const feesUpdate = {
                 totalFees,
                 paidAmount,
                 pendingAmount,
                 feeStatus,
+                cautionDeposit: prevCaution + cautionary,
+                cautionDepositRemaining: (prevCaution + cautionary) - prevCautionUsed,
                 lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
                 studentName: typeof student?.name === 'string' ? student.name : null,
                 studentNameLower: typeof student?.name === 'string' ? String(student.name).toLowerCase() : null,
@@ -1180,20 +1233,80 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
 exports.addStatisticsEntry = (0, https_1.onCall)(async (request) => {
     const { uid: adminId } = requireAdmin(request);
     const date = assertString(request.data?.date, 'date');
-    const expenditure = assertNonNegative(request.data?.expenditure, 'expenditure');
+    const expenditure = assertNonNegative(request.data?.expenditure ?? 0, 'expenditure');
+    const income = assertNonNegative(request.data?.income ?? 0, 'income');
+    const isIncome = request.data?.isIncome === true;
     const category = typeof request.data?.category === 'string' && request.data.category.trim()
         ? request.data.category.trim()
         : 'Other';
     const note = typeof request.data?.note === 'string' ? request.data.note.trim() : '';
-    const ref = await db.collection('statistics').add({
+    const source = typeof request.data?.source === 'string' ? request.data.source.trim() : '';
+    const studentHtno = typeof request.data?.studentHtno === 'string' ? request.data.studentHtno.trim() : '';
+    const studentName = typeof request.data?.studentName === 'string' ? request.data.studentName.trim() : '';
+    const paymentMode = typeof request.data?.paymentMode === 'string' ? request.data.paymentMode.trim() : 'Cash';
+    const utrRef = typeof request.data?.utrRef === 'string' ? request.data.utrRef.trim() : '';
+    const spentOn = typeof request.data?.spentOn === 'string' ? request.data.spentOn.trim() : '';
+    const fromDeposit = request.data?.fromDeposit === true;
+    const studentId = typeof request.data?.studentId === 'string' ? request.data.studentId.trim() : '';
+    const docData = {
         date,
         expenditure,
+        income,
+        isIncome,
         category,
         note,
+        paymentMode,
+        utrRef,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (isIncome) {
+        docData.source = source;
+        docData.studentHtno = studentHtno;
+        docData.studentName = studentName;
+    }
+    else {
+        docData.spentOn = spentOn;
+        docData.fromDeposit = fromDeposit;
+        if (fromDeposit) {
+            docData.studentId = studentId;
+            docData.studentHtno = studentHtno;
+            docData.studentName = studentName;
+        }
+    }
+    const newDocRef = db.collection('statistics').doc();
+    if (fromDeposit && studentId) {
+        const feesRef = db.collection('fees').doc(studentId);
+        await db.runTransaction(async (tx) => {
+            const feesSnap = await tx.get(feesRef);
+            if (!feesSnap.exists) {
+                throw new https_1.HttpsError('not-found', 'Fees document for student not found.');
+            }
+            const feesData = feesSnap.data();
+            const cautionDeposit = typeof feesData?.cautionDeposit === 'number' ? feesData.cautionDeposit : 0;
+            const cautionDepositUsed = typeof feesData?.cautionDepositUsed === 'number' ? feesData.cautionDepositUsed : 0;
+            const currentRemaining = cautionDeposit - cautionDepositUsed;
+            if (expenditure > currentRemaining) {
+                throw new https_1.HttpsError('failed-precondition', `Insufficient remaining cautionary deposit. Available: ₹${currentRemaining}`);
+            }
+            const nextUsed = cautionDepositUsed + expenditure;
+            const nextRemaining = cautionDeposit - nextUsed;
+            tx.set(feesRef, {
+                cautionDepositUsed: nextUsed,
+                cautionDepositRemaining: nextRemaining,
+                lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            tx.set(newDocRef, docData);
+        });
+    }
+    else {
+        await newDocRef.set(docData);
+    }
+    await writeAuditLog({
+        action: 'addStatisticsEntry',
+        adminId,
+        metadata: { date, expenditure, income, isIncome, category, source, studentHtno, id: newDocRef.id, fromDeposit },
     });
-    await writeAuditLog({ action: 'addStatisticsEntry', adminId, metadata: { date, expenditure, category, id: ref.id } });
-    return { ok: true, id: ref.id };
+    return { ok: true, id: newDocRef.id };
 });
 exports.adminUploadProfilePhoto = (0, https_1.onCall)(async (request) => {
     const { uid: adminId } = requireAdmin(request);

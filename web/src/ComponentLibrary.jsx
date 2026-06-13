@@ -156,7 +156,7 @@ export function Textarea({ label, error, className = '', ...props }) {
 // TABLE COMPONENT
 // ============================================================================
 
-export function Table({ columns, data, onRowClick }) {
+export function Table({ columns, data, onRowClick, expandedRowId, expandedRowRenderer }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
@@ -171,17 +171,25 @@ export function Table({ columns, data, onRowClick }) {
         </thead>
         <tbody>
           {data.map((row, idx) => (
-            <tr
-              key={idx}
-              className="border-b border-gray-100 hover:bg-blue-50 transition-colors cursor-pointer"
-              onClick={() => onRowClick?.(row)}
-            >
-              {columns.map(col => (
-                <td key={col.key} className="px-6 py-4 text-gray-900">
-                  {col.render ? col.render(row[col.key], row) : row[col.key]}
-                </td>
-              ))}
-            </tr>
+            <React.Fragment key={idx}>
+              <tr
+                className={`border-b border-gray-100 transition-colors ${onRowClick ? 'cursor-pointer hover:bg-blue-50' : ''} ${expandedRowId === row.id ? 'bg-blue-50/50' : ''}`}
+                onClick={() => onRowClick?.(row)}
+              >
+                {columns.map(col => (
+                  <td key={col.key} className="px-6 py-4 text-gray-900">
+                    {col.render ? col.render(row[col.key], row) : row[col.key]}
+                  </td>
+                ))}
+              </tr>
+              {expandedRowId === row.id && expandedRowRenderer && (
+                <tr className="bg-gray-50/50 border-b border-gray-200 shadow-inner">
+                  <td colSpan={columns.length} className="p-0">
+                    {expandedRowRenderer(row)}
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>
