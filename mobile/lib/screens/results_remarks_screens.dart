@@ -28,8 +28,51 @@ class _TestSubject {
 
 // ─── Results Screen ────────────────────────────────────────────────────────────
 
-class ResultsScreen extends StatelessWidget {
+class ResultsScreen extends StatefulWidget {
   const ResultsScreen({super.key});
+
+  @override
+  State<ResultsScreen> createState() => _ResultsScreenState();
+}
+
+class _ResultsScreenState extends State<ResultsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  final List<GlobalKey> _testKeys = [];
+  int _previousTestCount = -1;
+  bool _hasScrolled = false;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _maybeScrollToNew(int testCount) {
+    if (testCount <= 0) return;
+    if (_previousTestCount == -1) {
+      // First load — just mark count, no scroll
+      _previousTestCount = testCount;
+      return;
+    }
+    if (testCount > _previousTestCount && !_hasScrolled) {
+      _hasScrolled = true;
+      _previousTestCount = testCount;
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        final key = _testKeys.isNotEmpty ? _testKeys.last : null;
+        if (key?.currentContext != null) {
+          Scrollable.ensureVisible(
+            key!.currentContext!,
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeInOut,
+            alignment: 0.1,
+          );
+        }
+      });
+    } else {
+      _previousTestCount = testCount;
+    }
+  }
 
   int _asInt(dynamic v, {int fallback = 0}) {
     if (v is int) return v;
@@ -63,7 +106,6 @@ class ResultsScreen extends StatelessWidget {
   }
 
   List<_WeeklyTest> _parseTests(Map<String, dynamic>? data) {
-    // Try weeklyTests first
     final rawTests = data?['weeklyTests'];
     if (rawTests is List && rawTests.isNotEmpty) {
       final out = <_WeeklyTest>[];
@@ -90,7 +132,6 @@ class ResultsScreen extends StatelessWidget {
       }
       if (out.isNotEmpty) return out;
     }
-    // Fallback: treat student['marks'] as a single test
     final marksRaw = (data?['marks'] is List)
         ? (data!['marks'] as List).cast<dynamic>()
         : const <dynamic>[];
@@ -169,9 +210,17 @@ class ResultsScreen extends StatelessWidget {
         const headerH = 170.0;
         const overlap = 44.0;
 
+        // Sync keys list length to tests list
+        while (_testKeys.length < tests.length) _testKeys.add(GlobalKey());
+        while (_testKeys.length > tests.length) _testKeys.removeLast();
+
+        // Trigger scroll-to-new after rebuild
+        WidgetsBinding.instance.addPostFrameCallback((_) => _maybeScrollToNew(tests.length));
+
         return ColoredBox(
           color: AppTheme.backgroundColor,
           child: SingleChildScrollView(
+            controller: _scrollController,
             padding: const EdgeInsets.only(bottom: AppTheme.spacingXL),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -245,10 +294,12 @@ class ResultsScreen extends StatelessWidget {
                           final test = entry.value;
                           final isLatest = idx == tests.length - 1;
                           return Padding(
+                            key: _testKeys[idx],
                             padding: const EdgeInsets.only(bottom: 14),
                             child: _WeeklyTestCard(
                               test: test,
                               isLatest: isLatest,
+                              isNew: isLatest && _hasScrolled,
                               colorForSubject: _colorForSubject,
                               onTap: () => Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -275,18 +326,64 @@ class ResultsScreen extends StatelessWidget {
 
 // ─── Weekly Test Card ─────────────────────────────────────────────────────────
 
-class _WeeklyTestCard extends StatelessWidget {
+class _WeeklyTestCard extends StatefulWidget {
   final _WeeklyTest test;
   final bool isLatest;
+  final bool isNew;
   final Color Function(String) colorForSubject;
   final VoidCallback onTap;
 
   const _WeeklyTestCard({
     required this.test,
     required this.isLatest,
+    this.isNew = false,
     required this.colorForSubject,
     required this.onTap,
   });
+
+  @override
+  State<_WeeklyTestCard> createState() => _WeeklyTestCardState();
+}
+
+class _WeeklyTestCardState extends State<_WeeklyTestCard> with SingleTickerProviderStateMixin {
+  late AnimationController _blinkController;
+  late Animation<double> _blinkAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _blinkController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _blinkAnim = Tween<double>(begin: 1.0, end: 0.15).animate(
+      CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
+    );
+    if (widget.isNew) {
+      _blinkController.repeat(reverse: true);
+      // Stop after 3 seconds
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) _blinkController.stop();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_WeeklyTestCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isNew && !oldWidget.isNew) {
+      _blinkController.repeat(reverse: true);
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) _blinkController.stop();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _blinkController.dispose();
+    super.dispose();
+  }
 
   String _grade(int p) {
     if (p >= 90) return 'A+';
@@ -296,28 +393,32 @@ class _WeeklyTestCard extends StatelessWidget {
     return 'C';
   }
 
+  /// Returns a color based on the percentage score
+  Color _barColorForPct(int pct) {
+    if (pct >= 85) return AppTheme.successColor;
+    if (pct >= 60) return AppTheme.warningColor;
+    return AppTheme.alertColor;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pct = (test.percent * 100).round();
+    final pct = (widget.test.percent * 100).round();
     final grade = _grade(pct);
-    final gradeColor = (grade == 'A+' || grade == 'A')
-        ? AppTheme.successColor
-        : (grade == 'B+' || grade == 'B')
-            ? AppTheme.warningColor
-            : AppTheme.alertColor;
+    final gradeColor = _barColorForPct(pct);
+    final barColor = _barColorForPct(pct);
 
-    return GestureDetector(
-      onTap: onTap,
+    Widget card = GestureDetector(
+      onTap: widget.onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
           color: AppTheme.white,
           borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
           border: Border.all(
-            color: isLatest ? AppTheme.goldenColor : AppTheme.borderColor,
-            width: isLatest ? 2.0 : 0.8,
+            color: widget.isLatest ? AppTheme.goldenColor : AppTheme.borderColor,
+            width: widget.isLatest ? 2.0 : 0.8,
           ),
-          boxShadow: isLatest
+          boxShadow: widget.isLatest
               ? [BoxShadow(color: AppTheme.goldenColor.withOpacity(0.25), blurRadius: 12, offset: const Offset(0, 4))]
               : const [AppTheme.shadowCard],
         ),
@@ -332,7 +433,7 @@ class _WeeklyTestCard extends StatelessWidget {
                   Container(
                     width: 40, height: 40,
                     decoration: BoxDecoration(
-                      gradient: isLatest ? AppTheme.goldGradient : AppTheme.headerGradient,
+                      gradient: widget.isLatest ? AppTheme.goldGradient : AppTheme.headerGradient,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.assignment_outlined, color: Colors.white, size: 20),
@@ -342,13 +443,13 @@ class _WeeklyTestCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(test.name,
+                        Text(widget.test.name,
                           style: const TextStyle(
                             fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.textPrimary,
                           ),
                         ),
-                        if (test.date != null)
-                          Text(DateFormat('dd MMM yyyy').format(test.date!),
+                        if (widget.test.date != null)
+                          Text(DateFormat('dd MMM yyyy').format(widget.test.date!),
                             style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
                           ),
                       ],
@@ -366,7 +467,7 @@ class _WeeklyTestCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  if (isLatest)
+                  if (widget.isLatest)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
@@ -384,7 +485,7 @@ class _WeeklyTestCard extends StatelessWidget {
               // Score summary
               Row(
                 children: [
-                  Text('${test.totalScore}/${test.totalMax}',
+                  Text('${widget.test.totalScore}/${widget.test.totalMax}',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
                   ),
                   const Spacer(),
@@ -394,29 +495,28 @@ class _WeeklyTestCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
+              // Progress bar — color based on score
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
-                  value: test.percent,
+                  value: widget.test.percent,
                   minHeight: 8,
                   backgroundColor: AppTheme.borderColor,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    isLatest ? AppTheme.goldenColor : AppTheme.primaryColor,
-                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(barColor),
                 ),
               ),
               const SizedBox(height: 10),
               // Subject chips
               Wrap(
                 spacing: 6, runSpacing: 6,
-                children: test.subjects.take(3).map((s) => Container(
+                children: widget.test.subjects.take(3).map((s) => Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: colorForSubject(s.name).withOpacity(0.08),
+                    color: widget.colorForSubject(s.name).withOpacity(0.08),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text('${s.name}: ${s.score}/${s.maxScore}',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: colorForSubject(s.name)),
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: widget.colorForSubject(s.name)),
                   ),
                 )).toList(),
               ),
@@ -436,6 +536,16 @@ class _WeeklyTestCard extends StatelessWidget {
         ),
       ),
     );
+
+    // Wrap with blink animation if this is a newly added test
+    if (widget.isNew) {
+      return AnimatedBuilder(
+        animation: _blinkAnim,
+        builder: (_, child) => Opacity(opacity: _blinkAnim.value, child: child),
+        child: card,
+      );
+    }
+    return card;
   }
 }
 
@@ -514,10 +624,10 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
               ],
             ),
           ),
-          // Subject bar chart
+          // Subject cards — styled like the list cards with narrow progress bars
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
               children: [
                 const Text('Subject-wise Marks',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
@@ -525,14 +635,17 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 ...test.subjects.map((s) {
                   final sPct = s.maxScore > 0 ? (s.score / s.maxScore) : 0.0;
-                  final sG = _grade((sPct * 100).round());
-                  final sGColor = (sG == 'A+' || sG == 'A')
+                  final sPctInt = (sPct * 100).round();
+                  final sG = _grade(sPctInt);
+                  final sGColor = sPctInt >= 85
                       ? AppTheme.successColor
-                      : (sG == 'B+' || sG == 'B') ? AppTheme.warningColor : AppTheme.alertColor;
-                  final color = colorForSubject(s.name);
+                      : sPctInt >= 60
+                          ? AppTheme.warningColor
+                          : AppTheme.alertColor;
+                  final subjectColor = colorForSubject(s.name);
                   return Container(
                     margin: const EdgeInsets.only(bottom: 14),
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: AppTheme.white,
                       borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
@@ -545,12 +658,12 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                         Row(
                           children: [
                             Container(
-                              width: 36, height: 36,
+                              width: 38, height: 38,
                               decoration: BoxDecoration(
-                                color: color.withOpacity(0.10),
+                                color: subjectColor.withOpacity(0.10),
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Icon(Icons.bookmark_border_rounded, color: color, size: 18),
+                              child: Icon(Icons.bookmark_border_rounded, color: subjectColor, size: 18),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -561,7 +674,7 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                             Text('${s.score}/${s.maxScore}',
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                               decoration: BoxDecoration(
@@ -574,38 +687,27 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        // Bar
-                        LayoutBuilder(builder: (ctx, box) {
-                          return Stack(
-                            children: [
-                              Container(
-                                width: box.maxWidth,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: AppTheme.borderColor,
-                                  borderRadius: BorderRadius.circular(8),
+                        const SizedBox(height: 10),
+                        // Narrow progress bar — same style as list cards
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(999),
+                                child: LinearProgressIndicator(
+                                  value: sPct,
+                                  minHeight: 8,
+                                  backgroundColor: AppTheme.borderColor,
+                                  valueColor: AlwaysStoppedAnimation<Color>(sGColor),
                                 ),
                               ),
-                              Container(
-                                width: box.maxWidth * sPct,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [color.withOpacity(0.7), color],
-                                  ),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                alignment: Alignment.centerRight,
-                                padding: const EdgeInsets.only(right: 10),
-                                child: sPct > 0.15
-                                    ? Text('${(sPct * 100).round()}%',
-                                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800))
-                                    : null,
-                              ),
-                            ],
-                          );
-                        }),
+                            ),
+                            const SizedBox(width: 10),
+                            Text('$sPctInt%',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sGColor),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   );
@@ -1138,54 +1240,80 @@ class _RemarkCardState extends State<_RemarkCard> with SingleTickerProviderState
       leftBar = FadeTransition(opacity: _animation, child: leftBar);
     }
 
+    // Always show photo area for alert-type remarks
     Widget? imageArea;
-    if (widget.data.type == _RemarkType.alert && widget.data.imageBase64 != null) {
-      imageArea = GestureDetector(
-        onTap: () => widget.onImageTap(widget.data.imageBase64!),
-        child: Container(
-          height: 120,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: spec.borderColor, width: 1.5),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(9),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.memory(
-                  base64Decode(widget.data.imageBase64!.contains(',')
-                      ? widget.data.imageBase64!.split(',').last
-                      : widget.data.imageBase64!),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Center(
-                    child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary),
-                  ),
-                ),
-                Positioned(
-                  bottom: 6, right: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.zoom_in_rounded, color: Colors.white, size: 12),
-                        SizedBox(width: 3),
-                        Text('View', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
-                      ],
+    if (widget.data.type == _RemarkType.alert) {
+      if (widget.data.imageBase64 != null) {
+        // Show thumbnail with tap-to-expand
+        imageArea = GestureDetector(
+          onTap: () => widget.onImageTap(widget.data.imageBase64!),
+          child: Container(
+            height: 120,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: spec.borderColor, width: 1.5),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.memory(
+                    base64Decode(widget.data.imageBase64!.contains(',')
+                        ? widget.data.imageBase64!.split(',').last
+                        : widget.data.imageBase64!),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary),
                     ),
                   ),
-                ),
-              ],
+                  Positioned(
+                    bottom: 6, right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.zoom_in_rounded, color: Colors.white, size: 12),
+                          SizedBox(width: 3),
+                          Text('View Photo', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } else {
+        // Show "no photo" placeholder so users know the feature exists
+        imageArea = Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+          decoration: BoxDecoration(
+            color: AppTheme.alertColor.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.alertColor.withOpacity(0.20), width: 1.2),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.photo_camera_outlined, color: AppTheme.alertColor.withOpacity(0.5), size: 18),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('No evidence photo attached',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
 
       if (shouldBlink) {
         imageArea = FadeTransition(opacity: _animation, child: imageArea);

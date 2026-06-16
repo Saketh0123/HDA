@@ -505,28 +505,6 @@ class _HomeHeader extends StatelessWidget {
                           _DetailRow(Icons.group_outlined, batch),
                         if (stream.isEmpty && year.isEmpty && batch.isEmpty)
                           const Text('—', style: TextStyle(color: Colors.white60)),
-                        const SizedBox(height: 16),
-                        Container(
-                          width: 64, height: 64,
-                          decoration: BoxDecoration(
-                            gradient: AppTheme.goldGradient,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(color: AppTheme.goldenColor.withOpacity(0.45), blurRadius: 10, offset: const Offset(0, 4)),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('$overallPercent%',
-                                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
-                              ),
-                              const Text('Score',
-                                style: TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w700),
-                              ),
-                            ],
-                          ),
-                        ),
                       ],
                     ),
                   ),
