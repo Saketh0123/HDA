@@ -121,9 +121,13 @@ class FirebaseBackend {
     });
   }
 
-  Future<String?> requestPasswordResetOtpByEmail({required String email}) async {
+  Future<String?> requestPasswordResetOtpByEmail({
+    required String admissionNumber,
+    required String email,
+  }) async {
     final callable = _functions.httpsCallable('requestPasswordResetOtpByEmail');
     final res = await callable.call(<String, dynamic>{
+      'admissionNumber': admissionNumber.trim(),
       'email': email.trim(),
     });
     final data = res.data;

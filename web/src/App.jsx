@@ -27,6 +27,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { format } from 'date-fns';
 import {
   Bar,
@@ -40,7 +41,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { auth, db, functions } from './firebase';
+import { auth, db, functions, storage } from './firebase';
 import {
   Alert,
   Badge,
@@ -2212,42 +2213,14 @@ function RemarksPage() {
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState(false);
 
-  // Compress image to ≤20KB as base64 JPEG
-  const compressImageForRemark = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX_BYTES = 20 * 1024;
-        let quality = 0.8;
-        let w = img.width;
-        let h = img.height;
-        // Scale down if very large
-        const MAX_DIM = 600;
-        if (w > MAX_DIM || h > MAX_DIM) {
-          const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
-          w = Math.round(w * ratio);
-          h = Math.round(h * ratio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
-        // Reduce quality until under MAX_BYTES
-        let dataUrl = canvas.toDataURL('image/jpeg', quality);
-        while (dataUrl.length * 0.75 > MAX_BYTES && quality > 0.1) {
-          quality = Math.max(0.1, quality - 0.1);
-          dataUrl = canvas.toDataURL('image/jpeg', quality);
-        }
-        resolve(dataUrl);
-      };
-      img.onerror = reject;
-      img.src = ev.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+  // Upload image to Firebase Storage and return download URL
+  const uploadRemarkImage = async (file, studentId) => {
+    const ext = file.name.split('.').pop() || 'jpg';
+    const path = `remarks/${studentId}/${Date.now()}.${ext}`;
+    const fileRef = storageRef(storage, path);
+    await uploadBytes(fileRef, file);
+    return await getDownloadURL(fileRef);
+  };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -2359,15 +2332,22 @@ function RemarksPage() {
         if (!msg) continue;
 
         const finalMessage = subject && subject !== 'Other' ? `[${subject}] ${msg}` : msg;
-        const imgBase64 = imageById[s.id] || null;
-        await addStudentRemark({ studentId: s.id, type: backendType, message: finalMessage, imageBase64: imgBase64 });
+
+        // Upload image to Storage if provided, get URL
+        let imageUrl = null;
+        const imgFile = imageById[s.id];
+        if (imgFile) {
+          imageUrl = await uploadRemarkImage(imgFile, s.id);
+        }
+
+        await addStudentRemark({ studentId: s.id, type: backendType, message: finalMessage, imageUrl });
       }
 
       setSaveOk(true);
       setMessageById({});
       setImageById({});
-    } catch {
-      setSaveError('Failed to upload remarks.');
+    } catch (err) {
+      setSaveError('Failed to upload remarks: ' + (err?.message || 'unknown error'));
     } finally {
       setSaving(false);
     }
@@ -2471,11 +2451,11 @@ function RemarksPage() {
                       <>
                         <button
                           type="button"
-                          onClick={() => setPreviewImg(imageById[row.id])}
+                          onClick={() => setPreviewImg(URL.createObjectURL(imageById[row.id]))}
                           className="w-10 h-10 rounded-lg border-2 border-red-300 overflow-hidden hover:border-red-500 transition-colors flex-shrink-0 shadow"
                           title="Click to preview"
                         >
-                          <img src={imageById[row.id]} alt="evidence" className="w-full h-full object-cover" />
+                          <img src={URL.createObjectURL(imageById[row.id])} alt="evidence" className="w-full h-full object-cover" />
                         </button>
                         <button
                           type="button"
@@ -2496,12 +2476,8 @@ function RemarksPage() {
                           onChange={async (e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
-                            try {
-                              const dataUrl = await compressImageForRemark(file);
-                              setImageById((prev) => ({ ...prev, [row.id]: dataUrl }));
-                            } catch {
-                              alert('Failed to process image. Please try another file.');
-                            }
+                            // Store the raw File object — upload to Storage on submit
+                            setImageById((prev) => ({ ...prev, [row.id]: file }));
                             try { e.target.value = ''; } catch {}
                           }}
                         />
@@ -2534,7 +2510,7 @@ function RemarksPage() {
                   </button>
                 </div>
                 <img
-                  src={previewImg}
+                  src={previewImg instanceof File ? URL.createObjectURL(previewImg) : previewImg}
                   alt="Evidence"
                   className="w-full rounded-xl object-contain max-h-72 border border-gray-100"
                 />

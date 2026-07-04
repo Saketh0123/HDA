@@ -50,11 +50,23 @@ class _ResultsScreenState extends State<ResultsScreen> {
   void _maybeScrollToNew(int testCount) {
     if (testCount <= 0) return;
     if (_previousTestCount == -1) {
-      // First load — just mark count, no scroll
+      // First load — scroll to the latest (last) test so it is visible
       _previousTestCount = testCount;
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted) return;
+        final key = _testKeys.isNotEmpty ? _testKeys.last : null;
+        if (key?.currentContext != null) {
+          Scrollable.ensureVisible(
+            key!.currentContext!,
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeInOut,
+            alignment: 0.1,
+          );
+        }
+      });
       return;
     }
-    if (testCount > _previousTestCount && !_hasScrolled) {
+    if (testCount > _previousTestCount) {
       _hasScrolled = true;
       _previousTestCount = testCount;
       Future.delayed(const Duration(milliseconds: 800), () {
@@ -573,58 +585,76 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
     final topInset = MediaQuery.paddingOf(context).top;
     final pct = (test.percent * 100).round();
     final grade = _grade(pct);
+    const headerH = 170.0;
+    const overlap = 44.0;
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       body: Column(
         children: [
-          // Header
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.fromLTRB(20, topInset + 16, 20, 24),
-            decoration: const BoxDecoration(
-              gradient: AppTheme.purplePinkGradient,
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(28),
-                bottomRight: Radius.circular(28),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // ── Wave Header with overlapping stat boxes ────────────────────
+          SizedBox(
+            height: headerH + overlap + 28,
+            child: Stack(
               children: [
-                GestureDetector(
-                  onTap: () => Navigator.of(context).pop(),
+                // Wave background
+                ClipPath(
+                  clipper: _WaveClipper(),
                   child: Container(
-                    width: 36, height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      shape: BoxShape.circle,
+                    height: headerH,
+                    width: double.infinity,
+                    decoration: const BoxDecoration(gradient: AppTheme.accentGradient),
+                    padding: EdgeInsets.fromLTRB(20, topInset + 14, 20, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Back button
+                        GestureDetector(
+                          onTap: () => Navigator.of(context).pop(),
+                          child: Container(
+                            width: 34, height: 34,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.18),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 15),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          test.name,
+                          style: const TextStyle(
+                            color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        if (test.date != null)
+                          Text(
+                            DateFormat('dd MMMM yyyy').format(test.date!),
+                            style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                      ],
                     ),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
                   ),
                 ),
-                const SizedBox(height: 16),
-                Text(test.name,
-                  style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
-                ),
-                if (test.date != null)
-                  Text(DateFormat('dd MMMM yyyy').format(test.date!),
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                // Overlapping stat boxes — identical layout to RemarksScreen
+                Positioned(
+                  left: 20, right: 20,
+                  top: headerH - overlap,
+                  child: Row(
+                    children: [
+                      Expanded(child: _MiniStat(value: '$pct%', label: 'Score')),
+                      const SizedBox(width: 12),
+                      Expanded(child: _MiniStat(value: grade, label: 'Grade')),
+                      const SizedBox(width: 12),
+                      Expanded(child: _MiniStat(value: '${test.totalScore}/${test.totalMax}', label: 'Marks')),
+                    ],
                   ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    _DetailStat(value: '$pct%', label: 'Score'),
-                    const SizedBox(width: 12),
-                    _DetailStat(value: grade, label: 'Grade'),
-                    const SizedBox(width: 12),
-                    _DetailStat(value: '${test.totalScore}/${test.totalMax}', label: 'Marks'),
-                  ],
                 ),
               ],
             ),
           ),
-          // Subject cards — styled like the list cards with narrow progress bars
+          // ── Subject cards ──────────────────────────────────────────────
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
@@ -688,7 +718,6 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 10),
-                        // Narrow progress bar — same style as list cards
                         Row(
                           children: [
                             Expanded(
@@ -714,31 +743,6 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                 }),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailStat extends StatelessWidget {
-  final String value, label;
-  const _DetailStat({required this.value, required this.label});
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          Text(value,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
-          ),
-          Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -884,7 +888,8 @@ class RemarksScreen extends StatefulWidget {
 
 class _RemarksScreenState extends State<RemarksScreen> {
   _RemarkFilter _filter = _RemarkFilter.all;
-  String? _viewingImage; // base64 currently in lightbox
+  String? _viewingImage;    // base64 or URL currently in lightbox
+  bool _viewingImageIsUrl = false;
 
   DateTime? _asDateTime(dynamic v) {
     if (v is Timestamp) return v.toDate();
@@ -908,6 +913,8 @@ class _RemarksScreenState extends State<RemarksScreen> {
               ? _RemarkType.alert
               : _RemarkType.note;
       final dt = _asDateTime(r['date']);
+      // Support both new URL-based images and legacy base64 images
+      final imageUrl    = (r['imageUrl']    as String?);
       final imageBase64 = (r['imageBase64'] as String?);
       out.add(_RemarkItemData(
         type: mapped,
@@ -915,6 +922,7 @@ class _RemarksScreenState extends State<RemarksScreen> {
         sortDate: dt,
         message: msg,
         author: 'Admin',
+        imageUrl: imageUrl,
         imageBase64: imageBase64,
       ));
     }
@@ -1049,7 +1057,10 @@ class _RemarksScreenState extends State<RemarksScreen> {
                             for (final item in visible) ...[
                               _RemarkCard(
                                 data: item,
-                                onImageTap: (b64) => setState(() => _viewingImage = b64),
+                                onImageTap: (src, isUrl) => setState(() {
+                                  _viewingImage = src;
+                                  _viewingImageIsUrl = isUrl;
+                                }),
                               ),
                               const SizedBox(height: 14),
                             ],
@@ -1101,13 +1112,29 @@ class _RemarksScreenState extends State<RemarksScreen> {
                                 bottomLeft: Radius.circular(20),
                                 bottomRight: Radius.circular(20),
                               ),
-                              child: Image.memory(
-                                base64Decode(_viewingImage!.contains(',')
-                                    ? _viewingImage!.split(',').last
-                                    : _viewingImage!),
-                                fit: BoxFit.contain,
-                                width: double.infinity,
-                              ),
+                              child: _viewingImageIsUrl
+                                  ? Image.network(
+                                      _viewingImage!,
+                                      fit: BoxFit.contain,
+                                      width: double.infinity,
+                                      loadingBuilder: (_, child, progress) => progress == null
+                                          ? child
+                                          : const SizedBox(
+                                              height: 120,
+                                              child: Center(child: CircularProgressIndicator(color: AppTheme.primaryColor)),
+                                            ),
+                                      errorBuilder: (_, __, ___) => const SizedBox(
+                                        height: 80,
+                                        child: Center(child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary)),
+                                      ),
+                                    )
+                                  : Image.memory(
+                                      base64Decode(_viewingImage!.contains(',')
+                                          ? _viewingImage!.split(',').last
+                                          : _viewingImage!),
+                                      fit: BoxFit.contain,
+                                      width: double.infinity,
+                                    ),
                             ),
                           ],
                         ),
@@ -1175,7 +1202,8 @@ class _FilterChips extends StatelessWidget {
 
 class _RemarkCard extends StatefulWidget {
   final _RemarkItemData data;
-  final void Function(String base64) onImageTap;
+  // src = URL or base64 string; isUrl = true if it's a network URL
+  final void Function(String src, bool isUrl) onImageTap;
   const _RemarkCard({required this.data, required this.onImageTap});
 
   @override
@@ -1197,7 +1225,8 @@ class _RemarkCardState extends State<_RemarkCard> with SingleTickerProviderState
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
 
-    if (widget.data.type == _RemarkType.alert && widget.data.imageBase64 != null) {
+    final hasImage = widget.data.imageUrl != null || widget.data.imageBase64 != null;
+    if (widget.data.type == _RemarkType.alert && hasImage) {
       _controller.repeat(reverse: true);
     }
   }
@@ -1211,7 +1240,8 @@ class _RemarkCardState extends State<_RemarkCard> with SingleTickerProviderState
   @override
   Widget build(BuildContext context) {
     final spec = _RemarkTypeSpec.from(widget.data.type);
-    final shouldBlink = widget.data.type == _RemarkType.alert && widget.data.imageBase64 != null;
+    final hasImage = widget.data.imageUrl != null || widget.data.imageBase64 != null;
+    final shouldBlink = widget.data.type == _RemarkType.alert && hasImage;
 
     Widget badge = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1243,10 +1273,44 @@ class _RemarkCardState extends State<_RemarkCard> with SingleTickerProviderState
     // Always show photo area for alert-type remarks
     Widget? imageArea;
     if (widget.data.type == _RemarkType.alert) {
-      if (widget.data.imageBase64 != null) {
+      final imageUrl    = widget.data.imageUrl;
+      final imageBase64 = widget.data.imageBase64;
+
+      if (imageUrl != null || imageBase64 != null) {
+        // Build the image widget — prefer URL over base64
+        Widget imageWidget;
+        if (imageUrl != null) {
+          imageWidget = Image.network(
+            imageUrl,
+            fit: BoxFit.cover,
+            loadingBuilder: (_, child, progress) => progress == null
+                ? child
+                : const Center(child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor)),
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary),
+            ),
+          );
+        } else {
+          imageWidget = Image.memory(
+            base64Decode(imageBase64!.contains(',')
+                ? imageBase64.split(',').last
+                : imageBase64),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary),
+            ),
+          );
+        }
+
         // Show thumbnail with tap-to-expand
         imageArea = GestureDetector(
-          onTap: () => widget.onImageTap(widget.data.imageBase64!),
+          onTap: () {
+            if (imageUrl != null) {
+              widget.onImageTap(imageUrl, true);
+            } else {
+              widget.onImageTap(imageBase64!, false);
+            }
+          },
           child: Container(
             height: 120,
             width: double.infinity,
@@ -1259,15 +1323,7 @@ class _RemarkCardState extends State<_RemarkCard> with SingleTickerProviderState
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.memory(
-                    base64Decode(widget.data.imageBase64!.contains(',')
-                        ? widget.data.imageBase64!.split(',').last
-                        : widget.data.imageBase64!),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Icon(Icons.broken_image_outlined, color: AppTheme.textSecondary),
-                    ),
-                  ),
+                  imageWidget,
                   Positioned(
                     bottom: 6, right: 6,
                     child: Container(
@@ -1380,10 +1436,12 @@ class _RemarkItemData {
   final _RemarkType type;
   final String date, message, author;
   final DateTime? sortDate;
-  final String? imageBase64;
+  final String? imageUrl;    // Firebase Storage download URL (preferred)
+  final String? imageBase64; // Legacy base64 fallback
   const _RemarkItemData({
     required this.type, required this.date, required this.sortDate,
-    required this.message, required this.author, this.imageBase64,
+    required this.message, required this.author,
+    this.imageUrl, this.imageBase64,
   });
 }
 

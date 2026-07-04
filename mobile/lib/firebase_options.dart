@@ -40,7 +40,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyA9jW1oBenzr8T68rMKWYzza2nYRc99_18',
-    appId: '1:388271354551:android:3da1aa378f18573e719332',
+    appId: '1:388271354551:android:c41aacd6b67394cd719332',
     messagingSenderId: '388271354551',
     projectId: 'hdaapp-38a02',
     storageBucket: 'hdaapp-38a02.firebasestorage.app',
@@ -48,11 +48,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBeDcNfhUGSz6u8c7DwpYi1UtiVSBzip1Q',
-    appId: '1:388271354551:ios:a460935acd91b6b2719332',
+    appId: '1:388271354551:ios:d8865b6c99c0c4e5719332',
     messagingSenderId: '388271354551',
     projectId: 'hdaapp-38a02',
     storageBucket: 'hdaapp-38a02.firebasestorage.app',
-    iosBundleId: 'com.example.eduhubMobile',
+    iosBundleId: 'com.hda.studentportal',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(

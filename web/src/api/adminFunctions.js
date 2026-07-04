@@ -3,6 +3,7 @@ import { functions } from '../firebase';
 
 export const adminUpsertStudent = httpsCallable(functions, 'adminUpsertStudent');
 export const adminCreateAdmission = httpsCallable(functions, 'adminCreateAdmission');
+export const adminResetStudentPassword = httpsCallable(functions, 'adminResetStudentPassword');
 export const setUserRole = httpsCallable(functions, 'setUserRole');
 export const updateStudentMarks = httpsCallable(functions, 'updateStudentMarks');
 export const addStudentRemark = httpsCallable(functions, 'addStudentRemark');

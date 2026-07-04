@@ -83,6 +83,15 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   final _confirmPassCtrl = TextEditingController();
   final _backend = FirebaseBackend();
 
+  // Forgot password — admission number verification
+  final _admissionForResetCtrl = TextEditingController();
+
+  // 6-box OTP controllers for Forgot Password
+  final List<TextEditingController> _otpBoxCtrls =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _otpFocusNodes =
+      List.generate(6, (_) => FocusNode());
+
   _UiState _state = _UiState.signIn;
   bool _loading = false;
   bool _obscure = true;
@@ -108,6 +117,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _admissionCtrl.dispose(); _passwordCtrl.dispose();
     _emailCtrl.dispose(); _otpCtrl.dispose();
     _newPassCtrl.dispose(); _confirmPassCtrl.dispose();
+    _admissionForResetCtrl.dispose();
+    for (final c in _otpBoxCtrls) {
+      c.dispose();
+    }
+    for (final f in _otpFocusNodes) {
+      f.dispose();
+    }
     super.dispose();
   }
 
@@ -232,6 +248,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       _otpSent = false;
       _passwordCtrl.clear(); _otpCtrl.clear();
       _emailCtrl.clear(); _newPassCtrl.clear(); _confirmPassCtrl.clear();
+      _admissionForResetCtrl.clear();
+      for (final c in _otpBoxCtrls) {
+        c.clear();
+      }
     });
     _anim.forward(from: 0);
   }
@@ -243,7 +263,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   String _getSubtitle() {
     if (_state == _UiState.signIn) return 'Sign in with your Admission No & password';
-    return _otpSent ? 'Enter OTP sent to your email' : 'Enter your registered email';
+    return _otpSent ? 'Enter OTP sent to your email' : 'Enter your Admission No & registered email';
   }
 
   String _btnLabel() {
@@ -283,18 +303,34 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         ],
       );
     }
+
+    // ── Forgot password form ───────────────────────────────────────────────
     return Column(
       key: const ValueKey('forgot'),
       children: [
-        _Field(ctrl: _emailCtrl, hint: 'Registered email',
-          icon: Icons.email_outlined, keyboard: TextInputType.emailAddress),
+        if (!_otpSent) ...[
+          _Field(ctrl: _admissionForResetCtrl, hint: 'Admission Number',
+            icon: Icons.badge_outlined, caps: TextCapitalization.characters),
+          const SizedBox(height: 14),
+          _Field(ctrl: _emailCtrl, hint: 'Registered email',
+            icon: Icons.email_outlined, keyboard: TextInputType.emailAddress),
+        ],
         if (_otpSent) ...[
-          const SizedBox(height: 14),
-          _Field(ctrl: _otpCtrl, hint: 'OTP Code',
-            icon: Icons.lock_clock_outlined, keyboard: TextInputType.number),
-          const SizedBox(height: 14),
+          const Text(
+            'Enter the 6-digit verification code',
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 16),
+          _buildForgotOtpBoxes(),
+          const SizedBox(height: 20),
           _Field(ctrl: _newPassCtrl, hint: 'New Password',
-            icon: Icons.lock_outline_rounded, obscure: _obscure),
+            icon: Icons.lock_outline_rounded, obscure: _obscure,
+            suffix: IconButton(
+              icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                color: AppTheme.textSecondary, size: 20),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+          ),
           const SizedBox(height: 14),
           _Field(ctrl: _confirmPassCtrl, hint: 'Confirm Password',
             icon: Icons.lock_outline_rounded, obscure: _obscure),
@@ -343,7 +379,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       if (e.code == 'user-not-found') { _dialog('Not Found', 'Admission number not found. Contact admin.', Icons.person_off_outlined, AppTheme.alertColor); return; }
-      if (e.code == 'wrong-password' || e.code == 'invalid-credential') { _dialog('Wrong Password', 'Incorrect password. Please try again.', Icons.lock_outline_rounded, AppTheme.alertColor); return; }
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        _dialog('Wrong Password', 'Incorrect password.\n\nIf this is your first login, use the default password: HDA@2026', Icons.lock_outline_rounded, AppTheme.alertColor);
+        return;
+      }
       _dialog('Error', e.message ?? e.code, Icons.error_outline_rounded, AppTheme.alertColor);
     } catch (e) {
       if (!mounted) return;
@@ -353,12 +392,15 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
+
   Future<void> _sendOtp() async {
+    final adm = _admissionForResetCtrl.text.trim();
     final email = _emailCtrl.text.trim();
+    if (adm.isEmpty) { _dialog('Missing Field', 'Please enter your Admission Number.', Icons.badge_outlined, AppTheme.warningColor); return; }
     if (email.isEmpty) { _dialog('Missing Email', 'Please enter your registered email.', Icons.email_outlined, AppTheme.warningColor); return; }
     setState(() => _loading = true);
     try {
-      final masked = await _backend.requestPasswordResetOtpByEmail(email: email);
+      final masked = await _backend.requestPasswordResetOtpByEmail(admissionNumber: adm, email: email);
       if (!mounted) return;
       setState(() { _otpSent = true; });
       await showBeautifulDialog(context,
@@ -370,19 +412,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       );
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      final msg = (e.message ?? '').toLowerCase();
-      if (msg.contains('not found') || msg.contains('not registered') ||
-          msg.contains('no user') || e.code == 'not-found') {
-        await showBeautifulDialog(context,
-          icon: Icons.person_off_outlined,
-          iconColor: AppTheme.alertColor,
-          title: 'Unregistered Email',
-          message: 'This email is not linked to any student account. Please use your registered email.',
-          buttonLabel: 'OK',
-        );
-      } else {
-        _dialog('Failed', e.message ?? 'Failed to send OTP.', Icons.error_outline_rounded, AppTheme.alertColor);
-      }
+      _dialog('Failed', e.message ?? 'Failed to send OTP.', Icons.error_outline_rounded, AppTheme.alertColor);
     } catch (e) {
       if (!mounted) return;
       _dialog('Error', e.toString(), Icons.error_outline_rounded, AppTheme.alertColor);
@@ -393,7 +423,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   Future<void> _resetPass() async {
     final email = _emailCtrl.text.trim();
-    final otp = _otpCtrl.text.trim();
+    final otp = _otpBoxCtrls.map((c) => c.text).join().trim();
     final pass = _newPassCtrl.text.trim();
     final conf = _confirmPassCtrl.text.trim();
     if (email.isEmpty || otp.isEmpty || pass.isEmpty || conf.isEmpty) { _dialog('Missing Fields', 'Please fill all fields.', Icons.warning_amber_rounded, AppTheme.warningColor); return; }
@@ -420,6 +450,55 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Widget _buildForgotOtpBoxes() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(6, (i) {
+        return Container(
+          width: 44, height: 52,
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          child: TextField(
+            controller: _otpBoxCtrls[i],
+            focusNode: _otpFocusNodes[i],
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.number,
+            maxLength: 1,
+            style: const TextStyle(
+              fontSize: 20, fontWeight: FontWeight.w800,
+              color: AppTheme.indigoDeep,
+            ),
+            decoration: InputDecoration(
+              counterText: '',
+              filled: true,
+              fillColor: AppTheme.surfaceColor,
+              contentPadding: EdgeInsets.zero,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.borderColor, width: 1.5),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.borderColor, width: 1.5),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2.5),
+              ),
+            ),
+            onChanged: (v) {
+              if (v.length == 1 && i < 5) {
+                _otpFocusNodes[i + 1].requestFocus();
+              } else if (v.isEmpty && i > 0) {
+                _otpFocusNodes[i - 1].requestFocus();
+              }
+              setState(() {});
+            },
+          ),
+        );
+      }),
+    );
   }
 
   void _dialog(String title, String msg, IconData icon, Color color) {
@@ -659,9 +738,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
         title: const Text('Verify Email',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
-      body: Center(
+      body: Align(
+        alignment: Alignment.topCenter,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+          padding: const EdgeInsets.fromLTRB(28, 60, 28, 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -777,9 +857,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         title: const Text('Set New Password',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
-      body: Center(
+      body: Align(
+        alignment: Alignment.topCenter,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+          padding: const EdgeInsets.fromLTRB(28, 60, 28, 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

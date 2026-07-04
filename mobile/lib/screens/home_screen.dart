@@ -1,5 +1,4 @@
 // Flutter Mobile App – Home Screen (Premium redesign)
-import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -150,22 +149,70 @@ class _HomeScreenState extends State<HomeScreen> {
           ? cacheBustedUrl(photoUrl, photoUpdatedAt)
           : '';
 
-        final marks = (student?['marks'] is List)
-            ? (student!['marks'] as List).cast<dynamic>()
-            : const <dynamic>[];
+        // Parse all tests to calculate overall percentage (like in Results tab)
+        final rawTests = student?['weeklyTests'];
+        double sumPercents = 0.0;
+        int testCount = 0;
+        
+        dynamic latestTest;
 
-        int totalScore = 0, totalMax = 0;
-        for (final m in marks) {
-          if (m is! Map) continue;
-          final subj = (m['subject'] as String?) ?? '';
-          if (subj.trim().isEmpty) continue;
-          final score = _asInt(m['score']);
-          final maxScore = _asInt(m['maxScore'], fallback: 100);
-          totalScore += score;
-          totalMax += maxScore;
+        if (rawTests is List && rawTests.isNotEmpty) {
+          for (final t in rawTests) {
+            if (t is! Map) continue;
+            final rawSubjects = t['subjects'];
+            if (rawSubjects is List && rawSubjects.isNotEmpty) {
+              int testScore = 0;
+              int testMax = 0;
+              for (final s in rawSubjects) {
+                if (s is! Map) continue;
+                testScore += _asInt(s['score']);
+                testMax += _asInt(s['maxScore'], fallback: 100);
+              }
+              if (testMax > 0) {
+                sumPercents += (testScore / testMax);
+                testCount++;
+                latestTest = t; // Since it's ordered, the last valid one is the latest
+              }
+            }
+          }
         }
-        final overallPercent =
-            totalMax > 0 ? ((totalScore / totalMax) * 100).round() : 0;
+
+        // Latest test details
+        int latestScore = 0;
+        int latestMax = 0;
+        String latestName = 'Latest Marks';
+
+        if (latestTest != null) {
+          latestName = (latestTest['name'] as String?) ?? 'Latest Marks';
+          final rawSubjects = latestTest['subjects'] as List;
+          for (final s in rawSubjects) {
+            if (s is Map) {
+              latestScore += _asInt(s['score']);
+              latestMax += _asInt(s['maxScore'], fallback: 100);
+            }
+          }
+        } else {
+          // Fallback to legacy marks field
+          final marksRaw = (student?['marks'] is List)
+              ? (student!['marks'] as List).cast<dynamic>()
+              : const <dynamic>[];
+          if (marksRaw.isNotEmpty) {
+            latestName = 'Latest Marks';
+            for (final m in marksRaw) {
+              if (m is Map) {
+                latestScore += _asInt(m['score']);
+                latestMax += _asInt(m['maxScore'], fallback: 100);
+              }
+            }
+            if (latestMax > 0) {
+              sumPercents = (latestScore / latestMax);
+              testCount = 1;
+            }
+          }
+        }
+
+        final overallPercent = testCount > 0 ? ((sumPercents / testCount) * 100).round() : 0;
+        final latestPercent = latestMax > 0 ? ((latestScore / latestMax) * 100).round() : 0;
 
         final remarks = (student?['remarks'] is List)
             ? (student!['remarks'] as List).cast<dynamic>()
@@ -228,10 +275,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       _OverviewCard(
                         icon: Icons.menu_book_rounded,
                         gradient: AppTheme.headerGradient,
-                        title: 'Latest Marks',
-                        value: totalMax > 0 ? '$totalScore/$totalMax' : '—',
-                        footnote: totalMax > 0 ? '$overallPercent% overall' : 'No marks yet',
-                        footnoteColor: totalMax > 0 ? AppTheme.successColor : AppTheme.textSecondary,
+                        title: latestName,
+                        value: latestMax > 0 ? '$latestScore/$latestMax' : '—',
+                        footnote: latestMax > 0 ? '$latestPercent% score' : 'No marks yet',
+                        footnoteColor: latestMax > 0 ? AppTheme.successColor : AppTheme.textSecondary,
                       ),
                       const SizedBox(height: 28),
                       const _SectionLabel('Latest Remark'),
@@ -453,7 +500,6 @@ class _HomeHeader extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  // Square avatar 40% width
                   Expanded(
                     flex: 40,
                     child: AspectRatio(
@@ -462,6 +508,7 @@ class _HomeHeader extends StatelessWidget {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+                          color: Colors.white.withOpacity(0.08),
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(14),
@@ -558,50 +605,35 @@ class _StudentAvatarSquare extends StatelessWidget {
     required this.photoUrl,
     this.width,
     this.height,
-    this.fit = BoxFit.contain,
+    this.fit = BoxFit.cover,
   });
 
   @override
   Widget build(BuildContext context) {
     final url = photoUrl.trim();
-    final ImageProvider? imageProvider = url.startsWith('http') ? NetworkImage(url) : null;
+    final ImageProvider? imageProvider =
+        url.startsWith('http') ? NetworkImage(url) : null;
 
-    return Container(
+    if (imageProvider == null) return _fallback();
+
+    return Image(
+      image: imageProvider,
+      fit: fit,
       width: width,
       height: height,
-      decoration: BoxDecoration(
-        gradient: imageProvider == null ? AppTheme.headerGradient : null,
-      ),
-      child: imageProvider != null
-          ? Stack(
-              fit: StackFit.expand,
-              children: [
-                ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                  child: Image(
-                    image: imageProvider,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.center,
-                  ),
-                ),
-                Image(
-                  image: imageProvider,
-                  fit: fit,
-                  alignment: Alignment.center,
-                  errorBuilder: (_, __, ___) => _fallback(),
-                ),
-              ],
-            )
-          : _fallback(),
+      alignment: Alignment.center,
+      errorBuilder: (_, __, ___) => _fallback(),
     );
   }
 
   Widget _fallback() {
     return Container(
-      width: width, height: height,
+      width: width,
+      height: height,
       decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
       child: Center(
-        child: Icon(Icons.person_rounded, color: Colors.white, size: (width ?? 100) * 0.52),
+        child: Icon(Icons.person_rounded, color: Colors.white,
+            size: (width ?? 100) * 0.52),
       ),
     );
   }
