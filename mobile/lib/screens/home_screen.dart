@@ -99,7 +99,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final topInset = MediaQuery.paddingOf(context).top;
+    final rawTop = MediaQuery.paddingOf(context).top;
+    final topInset = rawTop > 0
+        ? rawTop
+        : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
     if (uid == null) {

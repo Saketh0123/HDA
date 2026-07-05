@@ -173,7 +173,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
       );
     }
 
-    final topInset = MediaQuery.paddingOf(context).top;
+    final rawTop = MediaQuery.paddingOf(context).top;
+    final topInset = rawTop > 0
+        ? rawTop
+        : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final studentStream =
         FirebaseFirestore.instance.collection('students').doc(uid).snapshots();
 
@@ -582,7 +585,10 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topInset = MediaQuery.paddingOf(context).top;
+    final rawTop = MediaQuery.paddingOf(context).top;
+    final topInset = rawTop > 0
+        ? rawTop
+        : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final pct = (test.percent * 100).round();
     final grade = _grade(pct);
     const headerH = 170.0;
@@ -956,7 +962,10 @@ class _RemarksScreenState extends State<RemarksScreen> {
       );
     }
 
-    final topInset = MediaQuery.paddingOf(context).top;
+    final rawTop = MediaQuery.paddingOf(context).top;
+    final topInset = rawTop > 0
+        ? rawTop
+        : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final studentStream =
         FirebaseFirestore.instance.collection('students').doc(uid).snapshots();
     const headerH = 170.0;
