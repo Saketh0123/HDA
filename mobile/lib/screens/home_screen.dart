@@ -249,7 +249,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return ColoredBox(
           color: AppTheme.backgroundColor,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.only(bottom: AppTheme.spacingXL),
+            // 64 = approximate nav bar height; bottomInset = home indicator
+            padding: EdgeInsets.only(
+              bottom: AppTheme.spacingXL + 64 + MediaQuery.paddingOf(context).bottom,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -453,6 +456,8 @@ class _HomeHeader extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('$greeting 👋',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13, fontWeight: FontWeight.w500),
               ),
               GestureDetector(
@@ -488,7 +493,12 @@ class _HomeHeader extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(name,
-            style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white, fontSize: 28,
+              fontWeight: FontWeight.w900, letterSpacing: -0.5,
+            ),
           ),
           const SizedBox(height: 20),
           // Large profile card inside header
@@ -542,8 +552,16 @@ class _HomeHeader extends StatelessWidget {
                               borderRadius: BorderRadius.circular(999),
                               border: Border.all(color: AppTheme.goldenColor.withOpacity(0.5)),
                             ),
-                            child: Text('#$admissionNumber',
-                              style: const TextStyle(fontSize: 16, color: AppTheme.goldenColor, fontWeight: FontWeight.w800),
+                            // FittedBox prevents long admission numbers from overflowing the pill
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('#$admissionNumber',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: AppTheme.goldenColor,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
                           ),
                         if (stream.trim().isNotEmpty)

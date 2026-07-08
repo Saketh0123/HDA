@@ -222,8 +222,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
         final perfIndex = (marksScore * 0.7 + reviewScore * 0.3).clamp(0.0, 1.0);
         final perfLabel = _perfLabel(perfIndex);
 
-        const headerH = 170.0;
-        const overlap = 44.0;
+        // headerH grows with topInset so content never overlaps on any iPhone
+        // +130 gives a safe buffer between title text and the stat card row
+        final double headerH = (topInset + 130.0).clamp(170.0, 250.0);
+        const double overlap = 44.0;
 
         // Sync keys list length to tests list
         while (_testKeys.length < tests.length) _testKeys.add(GlobalKey());
@@ -236,7 +238,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
           color: AppTheme.backgroundColor,
           child: SingleChildScrollView(
             controller: _scrollController,
-            padding: const EdgeInsets.only(bottom: AppTheme.spacingXL),
+            // 64 = approximate nav bar content height; bottomInset = home indicator
+            padding: EdgeInsets.only(
+              bottom: AppTheme.spacingXL + 64 + MediaQuery.paddingOf(context).bottom,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -591,8 +596,10 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
         : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final pct = (test.percent * 100).round();
     final grade = _grade(pct);
-    const headerH = 170.0;
-    const overlap = 44.0;
+    // headerH grows with topInset so back btn + title + stat cards never overlap
+    // back btn(34) + gap(10) + title(32) + date(18) + padding + safe-gap = ~170
+    final double headerH = (topInset + 170.0).clamp(200.0, 280.0);
+    const double overlap = 44.0;
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
@@ -663,7 +670,12 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
           // ── Subject cards ──────────────────────────────────────────────
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              // bottom padding = home indicator safe area so last subject card
+              // is never hidden behind the device's home indicator bar
+              padding: EdgeInsets.fromLTRB(
+                20, 4, 20,
+                20 + MediaQuery.paddingOf(context).bottom,
+              ),
               children: [
                 const Text('Subject-wise Marks',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
@@ -781,7 +793,7 @@ class _MiniStat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
       decoration: BoxDecoration(
         color: AppTheme.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
@@ -789,13 +801,33 @@ class _MiniStat extends StatelessWidget {
         border: Border.all(color: AppTheme.borderColor, width: 0.8),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(value,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppTheme.primaryColor),
+          // FittedBox auto-scales long values (e.g. "400/400") to always fit in 1 line
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.primaryColor,
+              ),
+            ),
           ),
           const SizedBox(height: 3),
-          Text(label,
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.textSecondary),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textSecondary,
+            ),
           ),
         ],
       ),
@@ -968,8 +1000,9 @@ class _RemarksScreenState extends State<RemarksScreen> {
         : (Theme.of(context).platform == TargetPlatform.iOS ? 47.0 : 20.0);
     final studentStream =
         FirebaseFirestore.instance.collection('students').doc(uid).snapshots();
-    const headerH = 170.0;
-    const overlap = 44.0;
+    // headerH grows with topInset so content never overlaps on any iPhone
+    final double headerH = (topInset + 130.0).clamp(170.0, 250.0);
+    const double overlap = 44.0;
 
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: studentStream,
@@ -998,7 +1031,10 @@ class _RemarksScreenState extends State<RemarksScreen> {
             ColoredBox(
               color: AppTheme.backgroundColor,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: AppTheme.spacingXL),
+                // 64 = approximate nav bar content height; bottomInset = home indicator
+                padding: EdgeInsets.only(
+                  bottom: AppTheme.spacingXL + 64 + MediaQuery.paddingOf(context).bottom,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
