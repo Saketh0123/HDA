@@ -44,6 +44,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Config: config/{docId}
+    match /config/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

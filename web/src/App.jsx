@@ -292,6 +292,62 @@ function AdminShell({ user, onLogout }) {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+  // ── Accounts password gate ──────────────────────────────────────────────
+  // Password is stored in Firestore: config/accountsGate → { password: "..." }
+  // Set it once in Firebase Console. Completely separate from admin login.
+  const [accountsUnlocked, setAccountsUnlocked] = useState(false);
+  const [showAccountsGate, setShowAccountsGate] = useState(false);
+  const [accountsPwInput, setAccountsPwInput] = useState('');
+  const [accountsPwError, setAccountsPwError] = useState('');
+  const [accountsPwLoading, setAccountsPwLoading] = useState(false);
+
+  const handleNavClick = (id) => {
+    if (id === 'accounts' && !accountsUnlocked) {
+      setAccountsPwInput('');
+      setAccountsPwError('');
+      setShowAccountsGate(true);
+      setMobileSidebarOpen(false);
+      return;
+    }
+    setActiveTab(id);
+    if (id !== 'accounts') setAccountsUnlocked(false);
+    setMobileSidebarOpen(false);
+  };
+
+  const handleAccountsUnlock = async (e) => {
+    e.preventDefault();
+    if (!accountsPwInput.trim()) return;
+    setAccountsPwLoading(true);
+    setAccountsPwError('');
+    try {
+      // Fetch the password stored in Firestore (config/accountsGate)
+      const snap = await getDoc(doc(db, 'config', 'accountsGate'));
+      if (!snap.exists()) {
+        setAccountsPwError('Accounts password not configured. Set it in Firestore.');
+        return;
+      }
+      const storedPassword = snap.data()?.password;
+      if (!storedPassword) {
+        setAccountsPwError('Accounts password not set. Add a "password" field in Firestore.');
+        return;
+      }
+      if (accountsPwInput === storedPassword) {
+        setAccountsUnlocked(true);
+        setShowAccountsGate(false);
+        setActiveTab('accounts');
+        setAccountsPwInput('');
+      } else {
+        setAccountsPwError('Incorrect password. Please try again.');
+      }
+    } catch (err) {
+      console.error('Accounts unlock error:', err);
+      setAccountsPwError('Failed to verify password. Check your connection.');
+    } finally {
+      setAccountsPwLoading(false);
+    }
+  };
+  // ───────────────────────────────────────────────────────────────────────
+
   const navItems = useMemo(
     () => [
       { id: 'dashboard', icon: Home, label: 'Dashboard' },
@@ -355,10 +411,7 @@ function AdminShell({ user, onLogout }) {
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => {
-                setActiveTab(item.id);
-                setMobileSidebarOpen(false);
-              }}
+              onClick={() => handleNavClick(item.id)}
               className={
                 `w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ` +
                 (activeTab === item.id ? 'bg-white/15 text-white font-medium' : 'text-white/90 hover:bg-white/10')
@@ -407,6 +460,57 @@ function AdminShell({ user, onLogout }) {
           {activeTab === 'statistics' && <StatisticsPage />}
         </div>
       </main>
+
+      {/* ── Accounts Password Gate Modal ───────────────────────────────── */}
+      {showAccountsGate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4 space-y-6">
+            {/* Header */}
+            <div className="text-center space-y-2">
+              <div className="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-800 flex items-center justify-center text-white text-2xl shadow-lg mb-2">
+                🔒
+              </div>
+              <h3 className="text-xl font-bold text-gray-900">Accounts Access</h3>
+              <p className="text-sm text-gray-500">Enter the password to view financial data</p>
+            </div>
+
+            {/* Error */}
+            {accountsPwError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm text-center">
+                {accountsPwError}
+              </div>
+            )}
+
+            {/* Form */}
+            <form onSubmit={handleAccountsUnlock} className="space-y-4">
+              <input
+                type="password"
+                value={accountsPwInput}
+                onChange={(e) => { setAccountsPwInput(e.target.value); setAccountsPwError(''); }}
+                placeholder="Enter your admin password"
+                autoFocus
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowAccountsGate(false); setAccountsPwInput(''); setAccountsPwError(''); }}
+                  className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={accountsPwLoading}
+                  className="flex-1 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/25 disabled:opacity-60"
+                >
+                  {accountsPwLoading ? 'Verifying…' : 'Unlock'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
