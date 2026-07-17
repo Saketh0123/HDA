@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
+exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.adminResetStudentPassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const params_1 = require("firebase-functions/params");
@@ -945,23 +945,29 @@ exports.verifyEmailWithOtp = (0, https_1.onCall)(async (request) => {
 // passwordResetEmailCodes/{emailHash}
 // { emailLower, uid, codeHash, expiresAt, attempts, createdAt }
 exports.requestPasswordResetOtpByEmail = (0, https_1.onCall)({ secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM] }, async (request) => {
+    const admissionNumber = assertString(request.data?.admissionNumber, 'admissionNumber');
     const email = assertString(request.data?.email, 'email');
     const emailLower = email.trim().toLowerCase();
     if (!emailLower.includes('@')) {
         throw new https_1.HttpsError('invalid-argument', 'email must be a valid email address.');
     }
-    // Use limit(2) to detect duplicates and prevent resetting the wrong account.
-    const snap = await db.collection('students').where('emailLower', '==', emailLower).limit(2).get();
-    if (snap.empty) {
-        // Throw a not-found error so unregistered emails are rejected.
-        throw new https_1.HttpsError('not-found', 'This email is not registered with any student account.');
+    // Look up student by admission number first.
+    const admSnap = await db
+        .collection('students')
+        .where('admissionNumber', '==', admissionNumber.trim())
+        .limit(1)
+        .get();
+    if (admSnap.empty) {
+        throw new https_1.HttpsError('not-found', 'Admission number not found.');
     }
-    if (snap.size > 1) {
-        throw new https_1.HttpsError('failed-precondition', 'This email is linked to multiple students. Please contact admin to assign unique emails before using email reset.');
-    }
-    const studentDoc = snap.docs[0];
+    const studentDoc = admSnap.docs[0];
     const student = studentDoc.data();
     const uid = studentDoc.id;
+    // Verify the provided email matches the registered email for this admission number.
+    const registeredEmail = typeof student.emailLower === 'string' ? student.emailLower.trim().toLowerCase() : '';
+    if (!registeredEmail || registeredEmail !== emailLower) {
+        throw new https_1.HttpsError('invalid-argument', 'The email does not match our records for this admission number. Please use your registered email.');
+    }
     const otp = generateOtp();
     const codeHash = hashCode(otp);
     const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000));
@@ -1028,6 +1034,32 @@ exports.resetPasswordWithOtpByEmail = (0, https_1.onCall)(async (request) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
     await codeRef.delete();
+    return { ok: true };
+});
+// ---------------------------------------------------------------------------
+// ADMIN: Reset a student's password back to default
+// ---------------------------------------------------------------------------
+exports.adminResetStudentPassword = (0, https_1.onCall)(async (request) => {
+    const { uid: adminId } = requireAdmin(request);
+    const studentId = assertString(request.data?.studentId, 'studentId');
+    // Get student record to find their auth email
+    const studentRef = db.collection('students').doc(studentId);
+    const studentSnap = await studentRef.get();
+    if (!studentSnap.exists) {
+        throw new https_1.HttpsError('not-found', 'Student not found.');
+    }
+    // Reset Firebase Auth password to default
+    await admin.auth().updateUser(studentId, { password: DEFAULT_STUDENT_PASSWORD });
+    // Set mustChangePassword back to true so they go through first-login flow
+    await studentRef.set({
+        mustChangePassword: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await writeAuditLog({
+        action: 'adminResetStudentPassword',
+        adminId,
+        studentId,
+    });
     return { ok: true };
 });
 // ---------------------------------------------------------------------------
@@ -1123,6 +1155,10 @@ exports.addStudentRemark = (0, https_1.onCall)(async (request) => {
     const message = assertString(request.data?.message, 'message');
     const type = request.data?.type;
     const remarkType = type === 'positive' || type === 'alert' || type === 'note' ? type : 'note';
+    // Prefer Storage URL (new) — fallback to base64 (legacy) if still sent
+    const imageUrl = typeof request.data?.imageUrl === 'string' && request.data.imageUrl.trim()
+        ? request.data.imageUrl.trim()
+        : null;
     const remark = {
         type: remarkType,
         message,
@@ -1130,6 +1166,9 @@ exports.addStudentRemark = (0, https_1.onCall)(async (request) => {
         // Firestore does not allow serverTimestamp() sentinels inside arrayUnion().
         date: admin.firestore.Timestamp.now(),
     };
+    if (imageUrl) {
+        remark.imageUrl = imageUrl;
+    }
     await db.collection('students').doc(studentId).set({
         remarks: admin.firestore.FieldValue.arrayUnion(remark),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1157,6 +1196,9 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
                 method: typeof historyEntry.method === 'string' ? historyEntry.method : 'unknown',
                 transactionId: typeof historyEntry.transactionId === 'string' && historyEntry.transactionId.trim()
                     ? historyEntry.transactionId.trim()
+                    : null,
+                note: typeof historyEntry.note === 'string' && historyEntry.note.trim()
+                    ? historyEntry.note.trim()
                     : null,
                 cautionDeposit: cautionary,
                 receiptNo: receiptNo || null,

@@ -60,8 +60,8 @@ import {
 const PAGE_SIZE = 10;
 
 const STREAM_OPTIONS = ['TECHNICAL', 'EAPCET', 'NDA', 'CEC'];
-const SUBJECT_OPTIONS = ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'English'];
-const REMARK_SUBJECT_OPTIONS = ['General', ...SUBJECT_OPTIONS];
+const SUBJECT_OPTIONS = ['Physics', 'Chemistry', 'Maths A', 'Maths B', 'English', 'Sanskrit', 'Civics', 'Economics', 'Telugu'];
+const REMARK_SUBJECT_OPTIONS = ['General', ...SUBJECT_OPTIONS, 'Other'];
 const SPEND_CATEGORIES = ['Salary', 'Maintenance', 'Utilities', 'Supplies', 'Other'];
 
 function getAcademicBatchStartYear(date = new Date()) {
@@ -594,8 +594,9 @@ function AdminLogin({ error }) {
 
 function DashboardPage() {
   const [studentCount, setStudentCount] = useState(null);
+  const [boysCount, setBoysCount] = useState(null);
+  const [girlsCount, setGirlsCount] = useState(null);
   const [accounts, setAccounts] = useState(null);
-  const [recentLogs, setRecentLogs] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -607,11 +608,33 @@ function DashboardPage() {
         if (!cancelled) setStudentCount(null);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
+  // Count boys and girls from students collection
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [boysSnap, girlsSnap] = await Promise.all([
+          getCountFromServer(query(collection(db, 'students'), where('gender', '==', 'male'))),
+          getCountFromServer(query(collection(db, 'students'), where('gender', '==', 'female'))),
+        ]);
+        if (!cancelled) {
+          setBoysCount(boysSnap.data().count);
+          setGirlsCount(girlsSnap.data().count);
+        }
+      } catch {
+        if (!cancelled) {
+          setBoysCount(null);
+          setGirlsCount(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fee collection totals
   useEffect(() => {
     const unsub = onSnapshot(
       doc(db, 'accounts', 'summary'),
@@ -621,26 +644,8 @@ function DashboardPage() {
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const q = query(collection(db, 'logs'), orderBy('createdAt', 'desc'), limit(5));
-        const snap = await getDocs(q);
-        if (cancelled) return;
-        setRecentLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch {
-        if (!cancelled) setRecentLogs([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const totalBudget = typeof accounts?.totalBudget === 'number' ? accounts.totalBudget : 0;
   const totalCollected = typeof accounts?.totalCollected === 'number' ? accounts.totalCollected : 0;
-  const totalPending = typeof accounts?.totalPending === 'number' ? accounts.totalPending : Math.max(0, totalBudget - totalCollected);
   const progress = totalBudget > 0 ? Math.round((totalCollected / totalBudget) * 100) : 0;
 
   return (
@@ -653,54 +658,29 @@ function DashboardPage() {
           icon="👥"
         />
         <SummaryCard
-          title="Total Collected"
-          value={formatCurrency(totalCollected)}
+          title="Boys"
+          value={typeof boysCount === 'number' ? boysCount.toLocaleString('en-IN') : '—'}
           color="success"
-          icon="💳"
+          icon="👦"
         />
         <SummaryCard
-          title="Total Pending"
-          value={formatCurrency(totalPending)}
+          title="Girls"
+          value={typeof girlsCount === 'number' ? girlsCount.toLocaleString('en-IN') : '—'}
           color="alert"
-          icon="⚠️"
+          icon="👧"
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Recent Activity" subtitle="Latest admin actions">
-          <div className="space-y-3">
-            {recentLogs.length === 0 ? (
-              <div className="text-sm text-gray-600">No recent activity yet.</div>
-            ) : (
-              recentLogs.map((l) => (
-                <div key={l.id} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
-                  <span className="text-gray-700">{String(l.action || 'action')}</span>
-                  <span className="text-xs text-gray-500">{l.createdAt?.toDate ? format(l.createdAt.toDate(), 'dd MMM, HH:mm') : '—'}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card title="Fee Collection Status">
-          <div className="space-y-6">
-            <ProgressBar value={progress} label="Overall Collection" color="success" />
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-100">
-              <div>
-                <p className="text-sm text-gray-600">Collected</p>
-                <p className="text-xl font-bold text-green-600">{formatCurrency(totalCollected)}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Pending</p>
-                <p className="text-xl font-bold text-red-600">{formatCurrency(totalPending)}</p>
-              </div>
-            </div>
-          </div>
-        </Card>
+      {/* Fee Collection Status bar */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-subtle p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Fee Collection Status</h3>
+        <ProgressBar value={progress} label="Overall Collection" color="success" />
       </div>
     </div>
   );
 }
+
+
 
 // ============================================================================
 // PAGE: STUDENTS MANAGEMENT
@@ -1067,7 +1047,17 @@ function StudentsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input className="py-2 text-sm" placeholder="Student name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
                 <Input className="py-2 text-sm" placeholder="Father name" value={fatherName} onChange={(e) => setFatherName(e.target.value)} />
-                <Input className="py-2 text-sm" placeholder="Phone number" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} />
+                <Input
+                  className="py-2 text-sm"
+                  placeholder="Phone number (10 digits)"
+                  value={phoneNumber}
+                  maxLength={10}
+                  inputMode="numeric"
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setPhoneNumber(val);
+                  }}
+                />
 
                 <Select
                   className="py-2 text-sm"
@@ -1394,6 +1384,8 @@ function StudentsPage() {
 // ============================================================================
 
 function StudentDetailsView({ student, onBack, onDelete }) {
+  // Live subscription to student doc so header updates immediately after edits
+  const [liveStudent, setLiveStudent] = useState(student);
   const [dpUrl, setDpUrl] = useState(
     student.photoUrl
       ? cacheBustUrl(student.photoUrl, student.photoUpdatedAt)
@@ -1403,13 +1395,27 @@ function StudentDetailsView({ student, onBack, onDelete }) {
   const [feeData, setFeeData] = useState(null);
   const [previewImg, setPreviewImg] = useState(null);
 
+  // Live student subscription
   useEffect(() => {
-    setDpUrl(
-      student?.photoUrl
-        ? cacheBustUrl(student.photoUrl, student.photoUpdatedAt)
-        : 'https://ui-avatars.com/api/?name=' + encodeURIComponent(student?.name || 'Student')
+    if (!student?.id) return;
+    const unsub = onSnapshot(
+      doc(db, 'students', student.id),
+      (snap) => {
+        if (snap.exists()) {
+          const data = { id: snap.id, ...snap.data() };
+          setLiveStudent(data);
+          // Update avatar URL when name/photo changes
+          if (data.photoUrl) {
+            setDpUrl(cacheBustUrl(data.photoUrl, data.photoUpdatedAt));
+          } else {
+            setDpUrl('https://ui-avatars.com/api/?name=' + encodeURIComponent(data.name || 'Student'));
+          }
+        }
+      },
+      () => {}
     );
-  }, [student?.photoUrl, student?.photoUpdatedAt, student?.name]);
+    return () => unsub();
+  }, [student?.id]);
 
   useEffect(() => {
     if (!student?.id) return;
@@ -1476,12 +1482,12 @@ function StudentDetailsView({ student, onBack, onDelete }) {
         <Button variant="danger" size="sm" onClick={onDelete}>Delete Student</Button>
       </div>
 
-      {/* Profile Header */}
+      {/* Profile Header — uses liveStudent so name/stream/year/batch update immediately after edit */}
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row items-center md:items-start gap-8">
         {/* DP Upload Section */}
         <div className="relative group flex-shrink-0">
           <div className="w-32 h-32 rounded-2xl overflow-hidden bg-gray-100 border-4 border-white shadow-lg">
-            <img src={dpUrl} alt={student.name} className="w-full h-full object-contain object-center" />
+            <img src={dpUrl} alt={liveStudent.name} className="w-full h-full object-contain object-center" />
           </div>
           <label className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer rounded-2xl">
             <Camera size={24} className="mb-1" />
@@ -1497,37 +1503,21 @@ function StudentDetailsView({ student, onBack, onDelete }) {
 
         {/* Info */}
         <div className="flex-1 text-center md:text-left mt-2">
-          <h2 className="text-3xl font-bold text-gray-900">{student.name}</h2>
-          <p className="text-lg text-gray-500 mt-1">Admission Number: {student.admissionNumber || '—'}</p>
+          <h2 className="text-3xl font-bold text-gray-900">{liveStudent.name}</h2>
+          <p className="text-lg text-gray-500 mt-1">Admission Number: {liveStudent.admissionNumber || '—'}</p>
           
           <div className="flex flex-wrap gap-4 mt-6 justify-center md:justify-start">
-            <span className="px-4 py-2 bg-primary-50 text-primary-700 rounded-lg font-medium">{getStudentStreamValue(student) || '—'}</span>
-            <span className="px-4 py-2 bg-accent-50 text-accent-700 rounded-lg font-medium">{student.year || '1st'} Year</span>
-            <span className="px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium">Batch: {student.batch || '—'}</span>
+            <span className="px-4 py-2 bg-primary-50 text-primary-700 rounded-lg font-medium">{getStudentStreamValue(liveStudent) || '—'}</span>
+            <span className="px-4 py-2 bg-accent-50 text-accent-700 rounded-lg font-medium">{liveStudent.year || '1'} Year</span>
+            <span className="px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium">Batch: {liveStudent.batch || '—'}</span>
           </div>
         </div>
       </div>
 
       {/* Detailed Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Contact & Personal Details */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Personal Details</h3>
-          <div className="space-y-4">
-            <div className="flex justify-between border-b border-gray-100 pb-2">
-              <span className="text-gray-500">Father's Name</span>
-              <span className="font-medium text-gray-900">{student.fatherName || '—'}</span>
-            </div>
-            <div className="flex justify-between border-b border-gray-100 pb-2">
-              <span className="text-gray-500">Phone</span>
-              <span className="font-medium text-gray-900">{student.phoneNumber || '—'}</span>
-            </div>
-            <div className="flex justify-between border-b border-gray-100 pb-2">
-              <span className="text-gray-500">Gender</span>
-              <span className="font-medium text-gray-900 capitalize">{student.gender || '—'}</span>
-            </div>
-          </div>
-        </div>
+        {/* Contact & Personal Details - Editable */}
+        <EditablePersonalDetails student={student} />
 
         {/* Fees Overview */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -1575,11 +1565,12 @@ function StudentDetailsView({ student, onBack, onDelete }) {
                       {p.at?.toDate ? format(p.at.toDate(), 'dd MMM yyyy') : '—'}
                     </div>
                   </div>
-                  <div className="mt-1 flex gap-3 text-xs text-gray-500">
+                  <div className="mt-1 flex gap-3 text-xs text-gray-500 flex-wrap">
                     <span>Method: {String(p.method || 'cash').toUpperCase()}</span>
                     {p.receiptNo ? <span>Receipt: {p.receiptNo}</span> : null}
                     {p.transactionId ? <span>Txn: {p.transactionId}</span> : null}
                   </div>
+                  {p.note ? <div className="mt-1 text-xs text-gray-600 italic">📝 {String(p.note)}</div> : null}
                 </div>
               ))}
             </div>
@@ -1603,11 +1594,12 @@ function StudentDetailsView({ student, onBack, onDelete }) {
                       {p.at?.toDate ? format(p.at.toDate(), 'dd MMM yyyy') : '—'}
                     </div>
                   </div>
-                  <div className="mt-1 flex gap-3 text-xs text-blue-600">
+                  <div className="mt-1 flex gap-3 text-xs text-blue-600 flex-wrap">
                     <span>Method: {String(p.method || 'cash').toUpperCase()}</span>
                     {p.receiptNo ? <span>Receipt: {p.receiptNo}</span> : null}
                     {p.transactionId ? <span>Txn: {p.transactionId}</span> : null}
                   </div>
+                  {p.note ? <div className="mt-1 text-xs text-blue-700 italic">📝 {String(p.note)}</div> : null}
                 </div>
               ))}
             </div>
@@ -1697,6 +1689,222 @@ function StudentDetailsView({ student, onBack, onDelete }) {
               className="w-full rounded-xl object-contain max-h-72 border border-gray-100"
             />
             <div className="mt-2 text-xs text-gray-400 text-center">Click outside or × to close</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// EDITABLE PERSONAL DETAILS
+// ============================================================================
+
+function EditablePersonalDetails({ student }) {
+  // Live data from Firestore so display updates immediately after save
+  const [liveData, setLiveData] = useState(student);
+  const [editing, setEditing] = useState(false);
+
+  // Edit form fields
+  const [studentName, setStudentName] = useState('');
+  const [fatherName, setFatherName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [gender, setGender] = useState('');
+  const [stream, setStream] = useState('');
+  const [year, setYear] = useState('');
+  const [batch, setBatch] = useState('');
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveOk, setSaveOk] = useState(false);
+
+  // Subscribe to live student document so values refresh immediately after save
+  useEffect(() => {
+    if (!student?.id) return;
+    const unsub = onSnapshot(
+      doc(db, 'students', student.id),
+      (snap) => { if (snap.exists()) setLiveData({ id: snap.id, ...snap.data() }); },
+      () => {}
+    );
+    return () => unsub();
+  }, [student?.id]);
+
+  // When edit mode opens, populate form from latest live data
+  const openEdit = () => {
+    setStudentName(liveData.name || '');
+    setFatherName(liveData.fatherName || '');
+    setPhone(liveData.phoneNumber || '');
+    setGender(liveData.gender || '');
+    setStream(getStudentStreamValue(liveData) || STREAM_OPTIONS[0]);
+    setYear(String(liveData.year || '1'));
+    setBatch(liveData.batch || DEFAULT_BATCH);
+    setSaveError('');
+    setSaveOk(false);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    if (phone && !/^\d{10}$/.test(phone)) {
+      setSaveError('Phone must be exactly 10 digits.');
+      return;
+    }
+    setSaving(true);
+    setSaveError('');
+    setSaveOk(false);
+    try {
+      const trimmedName = studentName.trim();
+      if (!trimmedName) {
+        setSaveError('Student name cannot be empty.');
+        setSaving(false);
+        return;
+      }
+      await setDoc(
+        doc(db, 'students', student.id),
+        {
+          name: trimmedName,
+          nameLower: trimmedName.toLowerCase(),
+          fatherName: fatherName.trim(),
+          phoneNumber: phone.trim(),
+          gender: gender.trim(),
+          stream: stream,
+          courseOfStudy: stream,
+          year: year,
+          batch: batch,
+        },
+        { merge: true }
+      );
+      setSaveOk(true);
+      setEditing(false);
+    } catch {
+      setSaveError('Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setSaveError('');
+    setSaveOk(false);
+    setEditing(false);
+  };
+
+  const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent';
+  const labelCls = 'block text-xs font-semibold text-gray-500 mb-1';
+
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Personal Details</h3>
+        {!editing && (
+          <button
+            onClick={openEdit}
+            className="text-xs font-semibold text-primary-600 hover:text-primary-700 border border-primary-200 px-3 py-1 rounded-lg hover:bg-primary-50 transition-colors"
+          >
+            ✏️ Edit
+          </button>
+        )}
+      </div>
+
+      {saveError && <p className="text-red-600 text-sm mb-3">{saveError}</p>}
+      {saveOk && <p className="text-green-600 text-sm mb-3">✓ Saved successfully.</p>}
+
+      {editing ? (
+        <div className="space-y-3">
+          <div>
+            <label className={labelCls}>Student Name</label>
+            <input type="text" value={studentName} onChange={(e) => setStudentName(e.target.value)} className={inputCls} placeholder="Full name" />
+          </div>
+          <div>
+            <label className={labelCls}>Father's Name</label>
+            <input type="text" value={fatherName} onChange={(e) => setFatherName(e.target.value)} className={inputCls} placeholder="Father's name" />
+          </div>
+          <div>
+            <label className={labelCls}>Phone (10 digits)</label>
+            <input
+              type="text"
+              value={phone}
+              inputMode="numeric"
+              maxLength={10}
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              className={inputCls}
+              placeholder="10-digit phone number"
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Gender</label>
+            <select value={gender} onChange={(e) => setGender(e.target.value)} className={inputCls}>
+              <option value="">— Select —</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Stream</label>
+            <select value={stream} onChange={(e) => setStream(e.target.value)} className={inputCls}>
+              {STREAM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Year</label>
+              <select value={year} onChange={(e) => setYear(e.target.value)} className={inputCls}>
+                <option value="1">1st Year</option>
+                <option value="2">2nd Year</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Batch</label>
+              <select value={batch} onChange={(e) => setBatch(e.target.value)} className={inputCls}>
+                {BATCH_OPTIONS.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 py-2 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={saving}
+              className="flex-1 py-2 px-4 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Student Name</span>
+            <span className="font-medium text-gray-900">{liveData.name || '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Father's Name</span>
+            <span className="font-medium text-gray-900">{liveData.fatherName || '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Phone</span>
+            <span className="font-medium text-gray-900">{liveData.phoneNumber || '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Gender</span>
+            <span className="font-medium text-gray-900 capitalize">{liveData.gender || '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Stream</span>
+            <span className="font-medium text-gray-900">{getStudentStreamValue(liveData) || '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Year</span>
+            <span className="font-medium text-gray-900">{liveData.year ? `${liveData.year} Year` : '—'}</span>
+          </div>
+          <div className="flex justify-between border-b border-gray-100 pb-2">
+            <span className="text-gray-500">Batch</span>
+            <span className="font-medium text-gray-900">{liveData.batch || '—'}</span>
           </div>
         </div>
       )}
@@ -2663,6 +2871,7 @@ function FeesPage() {
   const [receiptNo, setReceiptNo] = useState('');
   const [payMethod, setPayMethod] = useState('cash');
   const [transactionId, setTransactionId] = useState('');
+  const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState(false);
@@ -2682,6 +2891,7 @@ function FeesPage() {
     setReceiptNo('');
     setTransactionId('');
     setPayMethod('cash');
+    setNoteText('');
   }, [searchTerm, batchFilter, yearFilter, streamFilter, statusFilter, currentPage]);
 
   const selectedStudentMeta = useMemo(() => {
@@ -2790,6 +3000,8 @@ function FeesPage() {
     setSaving(true);
     setSaveOk(false);
     setSaveError('');
+    const submittedNote = noteText.trim();
+    console.log('[onPay] Submitting payment with note:', JSON.stringify(submittedNote));
     try {
       if (auth.currentUser?.getIdToken) {
         await auth.currentUser.getIdToken(true);
@@ -2805,6 +3017,7 @@ function FeesPage() {
           amount: Number(pay),
           method: payMethod,
           transactionId: payMethod === 'cash' ? null : String(transactionId || '').trim(),
+          note: submittedNote || null,
         },
       });
 
@@ -2812,6 +3025,7 @@ function FeesPage() {
       setCautionDeposit('');
       setReceiptNo('');
       setTransactionId('');
+      setNoteText('');
       setSaveOk(true);
     } catch (err) {
       const code = typeof err?.code === 'string' ? err.code : '';
@@ -2938,7 +3152,16 @@ function FeesPage() {
             {saveOk ? <div className="mb-4"><Alert type="success" title="Saved" message="Payment recorded." /></div> : null}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input label="Total Fees" type="number" placeholder="0" value={detailsTotalFees} onChange={(e) => setDetailsTotalFees(e.target.value)} />
+              <Input
+                label="Total Fees"
+                type="number"
+                placeholder="0"
+                value={detailsTotalFees}
+                onChange={(e) => setDetailsTotalFees(e.target.value)}
+                readOnly={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0}
+                title={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0 ? 'Total fees cannot be changed after the first payment.' : ''}
+                style={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0 ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', opacity: 0.75 } : {}}
+              />
               <Input label="Paid" value={formatCurrency(selectedPaid)} readOnly />
               <Input label="Pending" value={formatCurrency(selectedPending)} readOnly />
               <Input label="Next Pending (after payment)" value={formatCurrency(nextPending)} readOnly />
@@ -3005,6 +3228,17 @@ function FeesPage() {
                     />
                   </div>
                 ) : null}
+                {/* Note field - always visible, use textarea for clarity */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Note <span className="text-gray-400 font-normal">(optional)</span></label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"
+                    placeholder="Add a note about this payment (e.g. term 1, scholarship deduction, etc.)"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                  />
+                </div>
               </div>
               <div className="text-sm text-gray-700">
                 Amount in words: <span className="font-semibold">{amountToWordsINR(pay + caution)}</span>
@@ -3031,6 +3265,12 @@ function FeesPage() {
                     <div className="mt-1 text-xs text-gray-600">Method: {String(p.method || 'unknown').toUpperCase()}</div>
                     {p.transactionId ? <div className="text-xs text-gray-600">Txn: {String(p.transactionId)}</div> : null}
                     {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
+                    <div className="text-xs mt-1">
+                      {p.note
+                        ? <span className="italic text-gray-700">📝 {String(p.note)}</span>
+                        : <span className="text-gray-400">No note</span>
+                      }
+                    </div>
                   </div>
                 ))}
               </div>
@@ -3549,9 +3789,20 @@ function AccountsPage() {
             type="date"
             value={selectedDate}
             onChange={(e) => {
-              setSelectedDate(e.target.value);
+              const val = e.target.value;
+              if (!val) return;
+              setSelectedDate(val);
               setIncomeViewMode('daily');
               setExpenditureViewMode('daily');
+              // Sync monthCursor to the selected date's month
+              const parts = val.split('-');
+              if (parts.length === 3) {
+                const yr = parseInt(parts[0], 10);
+                const mo = parseInt(parts[1], 10) - 1;
+                if (!isNaN(yr) && !isNaN(mo)) {
+                  setMonthCursor(new Date(yr, mo, 1));
+                }
+              }
             }}
           />
         </div>

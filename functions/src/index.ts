@@ -1471,6 +1471,10 @@ export const updateFees = onCall(async (request) => {
             typeof historyEntry.transactionId === 'string' && historyEntry.transactionId.trim()
               ? historyEntry.transactionId.trim()
               : null,
+          note:
+            typeof historyEntry.note === 'string' && historyEntry.note.trim()
+              ? historyEntry.note.trim()
+              : null,
           cautionDeposit: cautionary,
           receiptNo: receiptNo || null,
           // Firestore does not allow serverTimestamp() sentinels inside arrayUnion().
