@@ -2871,10 +2871,23 @@ function FeesPage() {
   const [receiptNo, setReceiptNo] = useState('');
   const [payMethod, setPayMethod] = useState('cash');
   const [transactionId, setTransactionId] = useState('');
+  const [transactionImage, setTransactionImage] = useState(null); // File object
+  const [transactionImagePreview, setTransactionImagePreview] = useState('');
   const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState(false);
+
+  // Real-time fees edit mode (controlled from Accounts page)
+  const [feesEditEnabled, setFeesEditEnabled] = useState(false);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'config', 'feesEditMode'),
+      (snap) => setFeesEditEnabled(snap.exists() ? Boolean(snap.data()?.enabled) : false),
+      () => setFeesEditEnabled(false)
+    );
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -2890,9 +2903,14 @@ function FeesPage() {
     setCautionDeposit('');
     setReceiptNo('');
     setTransactionId('');
+    setTransactionImage(null);
+    setTransactionImagePreview('');
     setPayMethod('cash');
     setNoteText('');
   }, [searchTerm, batchFilter, yearFilter, streamFilter, statusFilter, currentPage]);
+
+  // Methods that require a transaction ID
+  const methodRequiresTxn = (m) => ['phonepe', 'googlepay', 'swipe'].includes(m);
 
   const selectedStudentMeta = useMemo(() => {
     if (!selectedStudentId) return null;
@@ -2987,9 +3005,9 @@ function FeesPage() {
     if (pay === 0 && caution === 0) return 'Enter a payment amount or a cautionary deposit.';
     if (pay < 0 || caution < 0) return 'Enter valid amounts.';
     if (nextPaid > selectedTotal) return 'Payment exceeds total fees.';
-    if (payMethod !== 'cash' && !String(transactionId || '').trim()) return 'Reference ID is required for UPI/Cheque.';
+    if (methodRequiresTxn(payMethod) && !String(transactionId || '').trim() && !transactionImage) return 'Transaction ID or photo is required for this payment method.';
     return '';
-  }, [selectedStudentId, selectedTotal, pay, caution, nextPaid, payMethod, transactionId]);
+  }, [selectedStudentId, selectedTotal, pay, caution, nextPaid, payMethod, transactionId, transactionImage]);
 
   const onPay = async () => {
     if (payValidationError) {
@@ -3001,10 +3019,19 @@ function FeesPage() {
     setSaveOk(false);
     setSaveError('');
     const submittedNote = noteText.trim();
-    console.log('[onPay] Submitting payment with note:', JSON.stringify(submittedNote));
     try {
       if (auth.currentUser?.getIdToken) {
         await auth.currentUser.getIdToken(true);
+      }
+
+      // Upload transaction image to Storage if provided
+      let transactionImageUrl = null;
+      if (transactionImage) {
+        const ext = transactionImage.name?.split('.').pop() || 'jpg';
+        const path = `transactions/${selectedStudentId}/${Date.now()}.${ext}`;
+        const fileRef = storageRef(storage, path);
+        await uploadBytes(fileRef, transactionImage);
+        transactionImageUrl = await getDownloadURL(fileRef);
       }
 
       await updateFees({
@@ -3016,7 +3043,8 @@ function FeesPage() {
         paymentEntry: {
           amount: Number(pay),
           method: payMethod,
-          transactionId: payMethod === 'cash' ? null : String(transactionId || '').trim(),
+          transactionId: methodRequiresTxn(payMethod) ? String(transactionId || '').trim() || null : null,
+          transactionImageUrl: transactionImageUrl || null,
           note: submittedNote || null,
         },
       });
@@ -3025,6 +3053,8 @@ function FeesPage() {
       setCautionDeposit('');
       setReceiptNo('');
       setTransactionId('');
+      setTransactionImage(null);
+      setTransactionImagePreview('');
       setNoteText('');
       setSaveOk(true);
     } catch (err) {
@@ -3129,6 +3159,8 @@ function FeesPage() {
               setReceiptNo('');
               setPayMethod('cash');
               setTransactionId('');
+              setTransactionImage(null);
+              setTransactionImagePreview('');
             }}
           >
             Back
@@ -3151,6 +3183,12 @@ function FeesPage() {
             {saveError ? <div className="mb-4"><Alert type="error" title="Error" message={saveError} /></div> : null}
             {saveOk ? <div className="mb-4"><Alert type="success" title="Saved" message="Payment recorded." /></div> : null}
 
+            {/* Fees Edit Mode indicator */}
+            {feesEditEnabled && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 font-medium">
+                <span>✏️</span> <span>Fees editing is enabled by admin. Total Fees is editable.</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
                 label="Total Fees"
@@ -3158,9 +3196,9 @@ function FeesPage() {
                 placeholder="0"
                 value={detailsTotalFees}
                 onChange={(e) => setDetailsTotalFees(e.target.value)}
-                readOnly={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0}
-                title={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0 ? 'Total fees cannot be changed after the first payment.' : ''}
-                style={selectedFees !== null && Array.isArray(selectedFees?.paymentHistory) && selectedFees.paymentHistory.length > 0 ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', opacity: 0.75 } : {}}
+                readOnly={!feesEditEnabled}
+                title={!feesEditEnabled ? 'Total fees editing is disabled. Enable it from the Accounts page.' : 'You can edit the total fees amount.'}
+                style={!feesEditEnabled ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', opacity: 0.75 } : {}}
               />
               <Input label="Paid" value={formatCurrency(selectedPaid)} readOnly />
               <Input label="Pending" value={formatCurrency(selectedPending)} readOnly />
@@ -3205,10 +3243,13 @@ function FeesPage() {
                 <Select
                   label="Method"
                   value={payMethod}
-                  onChange={(e) => setPayMethod(e.target.value)}
+                  onChange={(e) => { setPayMethod(e.target.value); setTransactionId(''); setTransactionImage(null); setTransactionImagePreview(''); }}
                   options={[
                     { value: 'cash', label: 'Cash' },
-                    { value: 'upi', label: 'UPI' },
+                    { value: 'phonepe', label: 'PhonePe' },
+                    { value: 'googlepay', label: 'Google Pay' },
+                    { value: 'scanner', label: 'Scanner (QR)' },
+                    { value: 'swipe', label: 'Swipe (Card)' },
                     { value: 'check', label: 'Cheque' },
                   ]}
                 />
@@ -3218,14 +3259,58 @@ function FeesPage() {
                   value={receiptNo}
                   onChange={(e) => setReceiptNo(e.target.value)}
                 />
-                {payMethod !== 'cash' ? (
+                {/* Transaction ID + Photo Upload — shown only for PhonePe, Google Pay, Swipe */}
+                {methodRequiresTxn(payMethod) ? (
                   <div className="md:col-span-2">
-                    <Input
-                      label={payMethod === 'upi' ? 'Transaction ID' : 'Cheque / Reference No.'}
-                      placeholder={payMethod === 'upi' ? 'Enter UPI transaction id' : 'Enter cheque/reference no.'}
-                      value={transactionId}
-                      onChange={(e) => setTransactionId(e.target.value)}
-                    />
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Transaction ID <span className="text-gray-400 font-normal">(type or upload screenshot)</span></label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder={`Enter ${payMethod === 'swipe' ? 'card reference' : 'transaction'} ID`}
+                        className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                      />
+                      {/* Photo upload button */}
+                      {transactionImagePreview ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => window.open(transactionImagePreview, '_blank')}
+                            className="w-10 h-10 rounded-lg border-2 border-blue-300 overflow-hidden hover:border-blue-500 transition-colors flex-shrink-0 shadow"
+                            title="Click to preview"
+                          >
+                            <img src={transactionImagePreview} alt="txn" className="w-full h-full object-cover" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setTransactionImage(null); setTransactionImagePreview(''); }}
+                            className="text-xs text-red-500 hover:text-red-700 font-bold px-1"
+                            title="Remove photo"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer flex items-center gap-1.5 px-3 py-2.5 rounded-lg border-2 border-dashed border-blue-200 hover:border-blue-400 bg-blue-50 hover:bg-blue-100 transition-colors text-xs font-medium text-blue-600 flex-shrink-0" title="Upload transaction screenshot">
+                          <Camera size={14} />
+                          <span>Photo</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setTransactionImage(file);
+                              setTransactionImagePreview(URL.createObjectURL(file));
+                              try { e.target.value = ''; } catch {}
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">At least one of text ID or photo is required.</p>
                   </div>
                 ) : null}
                 {/* Note field - always visible, use textarea for clarity */}
@@ -3264,6 +3349,13 @@ function FeesPage() {
                     </div>
                     <div className="mt-1 text-xs text-gray-600">Method: {String(p.method || 'unknown').toUpperCase()}</div>
                     {p.transactionId ? <div className="text-xs text-gray-600">Txn: {String(p.transactionId)}</div> : null}
+                    {p.transactionImageUrl ? (
+                      <div className="mt-1">
+                        <a href={p.transactionImageUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
+                          <Camera size={11} /> View Transaction Screenshot
+                        </a>
+                      </div>
+                    ) : null}
                     {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
                     <div className="text-xs mt-1">
                       {p.note
@@ -3414,6 +3506,28 @@ function AccountsPage() {
   const [monthCursor, setMonthCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [statsEntries, setStatsEntries] = useState([]);
+
+  // Fees edit mode toggle — stored in Firestore config/feesEditMode
+  const [feesEditEnabled, setFeesEditEnabled] = useState(false);
+  const [feesEditToggling, setFeesEditToggling] = useState(false);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'config', 'feesEditMode'),
+      (snap) => setFeesEditEnabled(snap.exists() ? Boolean(snap.data()?.enabled) : false),
+      () => setFeesEditEnabled(false)
+    );
+    return () => unsub();
+  }, []);
+  const toggleFeesEdit = async () => {
+    setFeesEditToggling(true);
+    try {
+      await setDoc(doc(db, 'config', 'feesEditMode'), { enabled: !feesEditEnabled }, { merge: true });
+    } catch (err) {
+      console.error('Failed to toggle fees edit mode:', err);
+    } finally {
+      setFeesEditToggling(false);
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [incomeViewMode, setIncomeViewMode] = useState('monthly'); // 'monthly' or 'daily'
   const [expenditureViewMode, setExpenditureViewMode] = useState('monthly'); // 'monthly' or 'daily'
@@ -3729,11 +3843,40 @@ function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Fee summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <SummaryCard title="Total Fees" value={formatCurrency(totalFees)} color="primary" icon="💳" />
-        <SummaryCard title="Collected" value={formatCurrency(collectedFees)} color="success" icon="✓" />
-        <SummaryCard title="Recovery" value={formatCurrency(recovery)} color="alert" icon="⚠️" />
+      {/* Fee summary cards + Edit Toggle */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 flex-1">
+          <SummaryCard title="Total Fees" value={formatCurrency(totalFees)} color="primary" icon="💳" />
+          <SummaryCard title="Collected" value={formatCurrency(collectedFees)} color="success" icon="✓" />
+          <SummaryCard title="Recovery" value={formatCurrency(recovery)} color="alert" icon="⚠️" />
+        </div>
+        {/* Fees Edit Toggle */}
+        <div className="flex-shrink-0">
+          <div className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 shadow-sm transition-all ${
+            feesEditEnabled ? 'bg-amber-50 border-amber-400' : 'bg-gray-50 border-gray-200'
+          }`}>
+            <span className={`text-xs font-bold uppercase tracking-wider ${
+              feesEditEnabled ? 'text-amber-700' : 'text-gray-500'
+            }`}>Fees Edit Mode</span>
+            <button
+              onClick={toggleFeesEdit}
+              disabled={feesEditToggling}
+              title={feesEditEnabled ? 'Click to disable fees editing' : 'Click to enable fees editing'}
+              className={`relative inline-flex items-center w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                feesEditEnabled
+                  ? 'bg-amber-500 focus:ring-amber-400'
+                  : 'bg-gray-300 focus:ring-gray-400'
+              } ${feesEditToggling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              <span className={`inline-block w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-300 ${
+                feesEditEnabled ? 'translate-x-8' : 'translate-x-1'
+              }`} />
+            </button>
+            <span className={`text-xs font-semibold ${
+              feesEditEnabled ? 'text-amber-600' : 'text-gray-400'
+            }`}>{feesEditEnabled ? '🔓 ON' : '🔒 OFF'}</span>
+          </div>
+        </div>
       </div>
 
       {/* Month navigation */}

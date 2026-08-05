@@ -1197,6 +1197,9 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
                 transactionId: typeof historyEntry.transactionId === 'string' && historyEntry.transactionId.trim()
                     ? historyEntry.transactionId.trim()
                     : null,
+                transactionImageUrl: typeof historyEntry.transactionImageUrl === 'string' && historyEntry.transactionImageUrl.trim()
+                    ? historyEntry.transactionImageUrl.trim()
+                    : null,
                 note: typeof historyEntry.note === 'string' && historyEntry.note.trim()
                     ? historyEntry.note.trim()
                     : null,
