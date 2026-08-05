@@ -2873,10 +2873,13 @@ function FeesPage() {
   const [transactionId, setTransactionId] = useState('');
   const [transactionImage, setTransactionImage] = useState(null); // File object
   const [transactionImagePreview, setTransactionImagePreview] = useState('');
+  const [txnLightboxUrl, setTxnLightboxUrl] = useState(''); // for viewing saved screenshots inline
   const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savingTotalFees, setSavingTotalFees] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState(false);
+  const [totalFeesSaveOk, setTotalFeesSaveOk] = useState(false);
 
   // Real-time fees edit mode (controlled from Accounts page)
   const [feesEditEnabled, setFeesEditEnabled] = useState(false);
@@ -3071,6 +3074,41 @@ function FeesPage() {
     }
   };
 
+  // Save Total Fees only (no payment entry)
+  const onSaveTotalFees = async () => {
+    const newTotal = Number(detailsTotalFees);
+    if (!selectedStudentId) return;
+    if (!Number.isFinite(newTotal) || newTotal < 0) {
+      setSaveError('Enter a valid total fees amount.');
+      return;
+    }
+    if (newTotal < selectedPaid) {
+      setSaveError('Total fees cannot be less than already paid amount.');
+      return;
+    }
+    setSavingTotalFees(true);
+    setSaveError('');
+    setTotalFeesSaveOk(false);
+    try {
+      if (auth.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      await updateFees({
+        studentId: selectedStudentId,
+        totalFees: newTotal,
+        paidAmount: selectedPaid,
+        cautionDeposit: 0,
+        receiptNo: '',
+        // No paymentEntry — this only updates totalFees
+      });
+      setTotalFeesSaveOk(true);
+      setTimeout(() => setTotalFeesSaveOk(false), 3000);
+    } catch (err) {
+      const msg = typeof err?.message === 'string' ? err.message.replace(/^FirebaseError:\s*/i, '').trim() : '';
+      setSaveError(msg || 'Failed to save total fees.');
+    } finally {
+      setSavingTotalFees(false);
+    }
+  };
+
   const paymentHistory = Array.isArray(selectedFees?.paymentHistory) ? selectedFees.paymentHistory : [];
 
   const filteredFees = useMemo(() => {
@@ -3140,6 +3178,7 @@ function FeesPage() {
 
   if (selectedStudentId) {
     return (
+      <>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -3174,9 +3213,21 @@ function FeesPage() {
               selectedStudentMeta?.admissionNumber || selectedFees?.admissionNumber || ''
             }`}
             action={
-              <Button onClick={onPay} disabled={saving || Boolean(payValidationError)}>
-                {saving ? 'Processing…' : 'Pay'}
-              </Button>
+              <div className="flex items-center gap-2">
+                {feesEditEnabled && (
+                  <Button
+                    onClick={onSaveTotalFees}
+                    disabled={savingTotalFees}
+                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold shadow border border-amber-600 flex items-center gap-1.5"
+                  >
+                    <span>💾</span>
+                    <span>{savingTotalFees ? 'Saving…' : 'Save Total Fees'}</span>
+                  </Button>
+                )}
+                <Button onClick={onPay} disabled={saving || Boolean(payValidationError)}>
+                  {saving ? 'Processing…' : 'Pay'}
+                </Button>
+              </div>
             }
           >
             {detailsError ? <div className="mb-4"><Alert type="error" title="Error" message={detailsError} /></div> : null}
@@ -3185,21 +3236,54 @@ function FeesPage() {
 
             {/* Fees Edit Mode indicator */}
             {feesEditEnabled && (
-              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 font-medium">
-                <span>✏️</span> <span>Fees editing is enabled by admin. Total Fees is editable.</span>
+              <div className="mb-3 flex items-center justify-between gap-2 px-3.5 py-2.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 font-medium shadow-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">✏️</span>
+                  <span>Fees editing is enabled by admin. Edit Total Fees below and click <strong>Save Total Fees</strong>.</span>
+                </div>
+              </div>
+            )}
+            {totalFeesSaveOk && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-300 rounded-lg text-xs text-green-800 font-medium">
+                <span>✓</span> <span>Total fees updated successfully!</span>
               </div>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Total Fees"
-                type="number"
-                placeholder="0"
-                value={detailsTotalFees}
-                onChange={(e) => setDetailsTotalFees(e.target.value)}
-                readOnly={!feesEditEnabled}
-                title={!feesEditEnabled ? 'Total fees editing is disabled. Enable it from the Accounts page.' : 'You can edit the total fees amount.'}
-                style={!feesEditEnabled ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', opacity: 0.75 } : {}}
-              />
+              {/* Total Fees with inline Save button when edit mode is on */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Total Fees</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    placeholder="0"
+                    value={detailsTotalFees}
+                    onChange={(e) => setDetailsTotalFees(e.target.value)}
+                    readOnly={!feesEditEnabled}
+                    title={!feesEditEnabled ? 'Total fees editing is disabled. Enable it from the Accounts page.' : 'Edit total fees, then click Save Total Fees.'}
+                    className={`flex-1 px-4 py-2.5 border rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                      !feesEditEnabled
+                        ? 'bg-gray-100 cursor-not-allowed opacity-75 border-gray-200 text-gray-700'
+                        : 'bg-white border-amber-400 text-gray-900 shadow-xs'
+                    }`}
+                  />
+                  {feesEditEnabled && (
+                    <button
+                      type="button"
+                      onClick={onSaveTotalFees}
+                      disabled={savingTotalFees}
+                      title="Save updated total fees"
+                      className={`flex-shrink-0 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1 ${
+                        savingTotalFees
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white shadow hover:shadow-md'
+                      }`}
+                    >
+                      <span>💾</span>
+                      <span>{savingTotalFees ? 'Saving…' : 'Save Fees'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
               <Input label="Paid" value={formatCurrency(selectedPaid)} readOnly />
               <Input label="Pending" value={formatCurrency(selectedPending)} readOnly />
               <Input label="Next Pending (after payment)" value={formatCurrency(nextPending)} readOnly />
@@ -3351,9 +3435,13 @@ function FeesPage() {
                     {p.transactionId ? <div className="text-xs text-gray-600">Txn: {String(p.transactionId)}</div> : null}
                     {p.transactionImageUrl ? (
                       <div className="mt-1">
-                        <a href={p.transactionImageUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
+                        <button
+                          type="button"
+                          onClick={() => setTxnLightboxUrl(p.transactionImageUrl)}
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                        >
                           <Camera size={11} /> View Transaction Screenshot
-                        </a>
+                        </button>
                       </div>
                     ) : null}
                     {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
@@ -3370,6 +3458,66 @@ function FeesPage() {
           </Card>
         </div>
       </div>
+
+      {/* Transaction image lightbox */}
+      {txnLightboxUrl ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm"
+          onClick={() => setTxnLightboxUrl('')}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl p-3 max-w-lg w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                <Camera size={14} /> Transaction Screenshot
+              </span>
+              <button
+                onClick={() => setTxnLightboxUrl('')}
+                className="text-gray-400 hover:text-gray-700 text-xl leading-none font-bold w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100"
+              >
+                ×
+              </button>
+            </div>
+            <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 min-h-48 flex items-center justify-center">
+              <img
+                src={txnLightboxUrl}
+                alt="Transaction Screenshot"
+                className="w-full rounded-xl object-contain max-h-[70vh]"
+                onLoad={(e) => {
+                  e.target.style.opacity = 1;
+                  const spinner = e.target.parentElement?.querySelector('#txn-spinner');
+                  if (spinner) spinner.style.display = 'none';
+                }}
+                style={{ opacity: 0, transition: 'opacity 0.3s ease' }}
+              />
+              <div
+                id="txn-spinner"
+                className="absolute inset-0 flex items-center justify-center bg-gray-50"
+                style={{pointerEvents: 'none'}}
+              >
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+                  <span className="text-xs text-gray-400">Loading screenshot…</span>
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-gray-400">Click outside or × to close</p>
+              <a
+                href={txnLightboxUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Open full size ↗
+              </a>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      </>
     );
   }
 

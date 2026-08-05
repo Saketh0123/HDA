@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper: true if caller has admin role claim
+    function isAdmin() {
+      return request.auth != null && request.auth.token.role == 'admin';
+    }
+
+    // ── Profile photos (admin uploads, any signed-in user reads) ──────────
+    match /students/{studentId}/profile.jpg {
+      allow read:  if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ── Remark evidence photos (admin uploads, student reads own) ─────────
+    match /remarks/{studentId}/{filename} {
+      allow read:  if isAdmin() || (request.auth != null && request.auth.uid == studentId);
+      allow write: if isAdmin();
+    }
+
+    // ── Transaction screenshots (admin uploads for fee payments) ──────────
+    match /transactions/{studentId}/{filename} {
+      allow read:  if isAdmin();
+      allow write: if isAdmin();
+    }
+
+  }
+}
