@@ -29,6 +29,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { format } from 'date-fns';
+import { recognize } from 'tesseract.js';
 import {
   Bar,
   BarChart,
@@ -92,6 +93,7 @@ const adminCreateAdmission = httpsCallable(functions, 'adminCreateAdmission');
 const updateStudentMarks = httpsCallable(functions, 'updateStudentMarks');
 const addStudentRemark = httpsCallable(functions, 'addStudentRemark');
 const updateFees = httpsCallable(functions, 'updateFees');
+const editPaymentEntry = httpsCallable(functions, 'editPaymentEntry');
 const addStatisticsEntry = httpsCallable(functions, 'addStatisticsEntry');
 const adminMigrateStudents = httpsCallable(functions, 'adminMigrateStudents');
 const adminDeleteStudent = httpsCallable(functions, 'adminDeleteStudent');
@@ -2341,7 +2343,7 @@ function ResultsPage() {
                     }
                     setShowTestsView(false);
                   }}
-                  className="group relative bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all duration-300 cursor-pointer overflow-hidden flex flex-col justify-between min-h-[160px]"
+                  className="group relative bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all duration-300 cursor-pointer overflow-hidden flex flex-col justify-between min-h-[140px]"
                 >
                   <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-bl-full group-hover:scale-110 transition-transform duration-300 pointer-events-none" />
                   
@@ -2842,9 +2844,96 @@ function RemarksPage() {
   );
 }
 
-// ============================================================================
-// PAGE: FEES
-// ============================================================================
+function OcrSelectableImage({ src, alt, className }) {
+  const [ocrWords, setOcrWords] = useState([]);
+  const [imgDimensions, setImgDimensions] = useState({ width: 0, height: 0 });
+  const [ocrStatus, setOcrStatus] = useState('idle');
+
+  useEffect(() => {
+    if (!src) return;
+    let active = true;
+    setOcrStatus('loading');
+    setOcrWords([]);
+
+    recognize(src, 'eng')
+      .then((res) => {
+        if (!active) return;
+        if (res?.data?.words && Array.isArray(res.data.words)) {
+          setOcrWords(res.data.words);
+          setOcrStatus('ready');
+        } else {
+          setOcrStatus('ready');
+        }
+      })
+      .catch((err) => {
+        console.warn('[OCR] Recognition error:', err);
+        if (active) setOcrStatus('error');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [src]);
+
+  return (
+    <div className="relative inline-block w-full overflow-hidden select-none">
+      <img
+        src={src}
+        alt={alt || 'Screenshot'}
+        className={className}
+        onLoad={(e) => {
+          setImgDimensions({
+            width: e.target.naturalWidth || e.target.clientWidth || 1,
+            height: e.target.naturalHeight || e.target.clientHeight || 1,
+          });
+        }}
+      />
+      {/* Interactive selectable text layer mapped precisely over image text */}
+      {imgDimensions.width > 0 && imgDimensions.height > 0 && ocrWords.length > 0 && (
+        <div
+          className="absolute inset-0 pointer-events-auto select-text text-transparent selection:bg-blue-500/30 selection:text-blue-950 font-mono leading-none"
+          style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+        >
+          {ocrWords.map((w, idx) => {
+            const leftPct = (w.bbox.x0 / imgDimensions.width) * 100;
+            const topPct = (w.bbox.y0 / imgDimensions.height) * 100;
+            const widthPct = ((w.bbox.x1 - w.bbox.x0) / imgDimensions.width) * 100;
+            const heightPct = ((w.bbox.y1 - w.bbox.y0) / imgDimensions.height) * 100;
+
+            return (
+              <span
+                key={idx}
+                className="absolute cursor-text whitespace-nowrap overflow-hidden"
+                style={{
+                  left: `${leftPct}%`,
+                  top: `${topPct}%`,
+                  width: `${widthPct}%`,
+                  height: `${heightPct}%`,
+                  fontSize: `${Math.max(11, heightPct * 2.2)}px`,
+                  color: 'transparent',
+                }}
+                title={w.text}
+              >
+                {w.text}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {ocrStatus === 'loading' && (
+        <div className="absolute top-2 right-2 px-2.5 py-1 bg-black/75 text-white text-[11px] font-medium rounded-full backdrop-blur-md pointer-events-none flex items-center gap-1.5 shadow">
+          <div className="w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          <span>Detecting text for cursor selection…</span>
+        </div>
+      )}
+      {ocrStatus === 'ready' && ocrWords.length > 0 && (
+        <div className="absolute top-2 right-2 px-2 py-0.5 bg-blue-600/90 text-white text-[10px] font-bold rounded-md backdrop-blur-md pointer-events-none shadow">
+          ✨ Select text with cursor
+        </div>
+      )}
+    </div>
+  );
+}
 
 function FeesPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -2891,6 +2980,24 @@ function FeesPage() {
     );
     return () => unsub();
   }, []);
+
+  // Real-time payment history edit mode (controlled from Accounts page)
+  const [payHistoryEditEnabled, setPayHistoryEditEnabled] = useState(false);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'config', 'payHistoryEditMode'),
+      (snap) => setPayHistoryEditEnabled(snap.exists() ? Boolean(snap.data()?.enabled) : false),
+      () => setPayHistoryEditEnabled(false)
+    );
+    return () => unsub();
+  }, []);
+
+  // Payment history entry editing state
+  const [editingEntryRealIdx, setEditingEntryRealIdx] = useState(null);
+  const [editEntryData, setEditEntryData] = useState({});
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [entryEditError, setEntryEditError] = useState('');
+  const [entryEditOk, setEntryEditOk] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -3106,6 +3213,36 @@ function FeesPage() {
       setSaveError(msg || 'Failed to save total fees.');
     } finally {
       setSavingTotalFees(false);
+    }
+  };
+
+  // Save edits to a specific payment history entry
+  const onSaveEntryEdit = async () => {
+    if (editingEntryRealIdx === null || !selectedStudentId) return;
+    setSavingEntry(true);
+    setEntryEditError('');
+    setEntryEditOk(false);
+    try {
+      if (auth.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      await editPaymentEntry({
+        studentId: selectedStudentId,
+        entryIndex: editingEntryRealIdx,
+        amount: Number(editEntryData.amount) || 0,
+        cautionDeposit: Number(editEntryData.cautionDeposit) || 0,
+        method: editEntryData.method || 'cash',
+        transactionId: editEntryData.transactionId || null,
+        receiptNo: editEntryData.receiptNo || '',
+        note: editEntryData.note || null,
+      });
+      setEntryEditOk(true);
+      setEditingEntryRealIdx(null);
+      setEditEntryData({});
+      setTimeout(() => setEntryEditOk(false), 3000);
+    } catch (err) {
+      const msg = typeof err?.message === 'string' ? err.message.replace(/^FirebaseError:\s*/i, '').trim() : '';
+      setEntryEditError(msg || 'Failed to save entry.');
+    } finally {
+      setSavingEntry(false);
     }
   };
 
@@ -3387,7 +3524,16 @@ function FeesPage() {
                               const file = e.target.files?.[0];
                               if (!file) return;
                               setTransactionImage(file);
-                              setTransactionImagePreview(URL.createObjectURL(file));
+                              const previewUrl = URL.createObjectURL(file);
+                              setTransactionImagePreview(previewUrl);
+                              // Auto-detect transaction ID using OCR
+                              recognize(previewUrl, 'eng').then((res) => {
+                                const text = res?.data?.text || '';
+                                const match = text.match(/\b([A-Z0-9]{10,22})\b/i) || text.match(/(\d{10,20})/);
+                                if (match && match[1] && !transactionId) {
+                                  setTransactionId(match[1]);
+                                }
+                              }).catch(() => {});
                               try { e.target.value = ''; } catch {}
                             }}
                           />
@@ -3415,44 +3561,191 @@ function FeesPage() {
             </div>
           </Card>
 
-          <Card title="Payment History" subtitle="Latest first">
+          <Card
+            title="Payment History"
+            subtitle={payHistoryEditEnabled ? '✏️ Edit mode ON — click Edit on any entry' : 'Latest first'}
+          >
+            {entryEditOk && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-300 rounded-lg text-xs text-green-800 font-medium">
+                <span>✓</span> <span>Payment entry updated successfully!</span>
+              </div>
+            )}
+            {entryEditError && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-300 rounded-lg text-xs text-red-800">
+                <span>⚠️</span> <span>{entryEditError}</span>
+                <button onClick={() => setEntryEditError('')} className="ml-auto text-red-400 hover:text-red-600 font-bold">✕</button>
+              </div>
+            )}
             {paymentHistory.length === 0 ? (
               <div className="text-sm text-gray-600">No payments recorded yet.</div>
             ) : (
               <div className="space-y-3">
-                {[...paymentHistory].reverse().slice(0, 10).map((p, idx) => (
-                  <div key={idx} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-gray-900">
-                        {p.amount > 0 ? `Fees: ${formatCurrency(p.amount)}` : ''}
-                        {p.amount > 0 && p.cautionDeposit > 0 ? ' + ' : ''}
-                        {p.cautionDeposit > 0 ? `Caution: ${formatCurrency(p.cautionDeposit)}` : ''}
-                        {p.amount === 0 && (!p.cautionDeposit || p.cautionDeposit === 0) ? formatCurrency(0) : ''}
+                {[...paymentHistory].reverse().slice(0, 10).map((p, displayIdx) => {
+                  // Map display index back to real array index (paymentHistory is oldest-first)
+                  const realIdx = paymentHistory.length - 1 - displayIdx;
+                  const isEditing = editingEntryRealIdx === realIdx;
+
+                  if (isEditing) {
+                    // ── Inline edit form ──
+                    return (
+                      <div key={realIdx} className="border-2 border-amber-400 rounded-xl p-4 bg-amber-50 space-y-3 shadow">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-bold text-amber-800 flex items-center gap-1">✏️ Editing Entry — {p.at?.toDate ? format(p.at.toDate(), 'dd MMM, HH:mm') : '—'}</span>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingEntryRealIdx(null); setEditEntryData({}); setEntryEditError(''); }}
+                            className="text-gray-400 hover:text-gray-700 font-bold text-sm"
+                          >✕ Cancel</button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Amount (₹)</label>
+                            <input
+                              type="number"
+                              value={editEntryData.amount ?? ''}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, amount: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Caution Deposit (₹)</label>
+                            <input
+                              type="number"
+                              value={editEntryData.cautionDeposit ?? ''}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, cautionDeposit: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Method</label>
+                            <select
+                              value={editEntryData.method || 'cash'}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, method: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            >
+                              <option value="cash">Cash</option>
+                              <option value="phonepe">PhonePe</option>
+                              <option value="googlepay">Google Pay</option>
+                              <option value="scanner">Scanner (QR)</option>
+                              <option value="swipe">Swipe (Card)</option>
+                              <option value="check">Cheque</option>
+                              <option value="upi">UPI</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Receipt No.</label>
+                            <input
+                              type="text"
+                              value={editEntryData.receiptNo ?? ''}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, receiptNo: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              placeholder="Receipt number"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Transaction ID</label>
+                            <input
+                              type="text"
+                              value={editEntryData.transactionId ?? ''}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, transactionId: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              placeholder="Transaction / UTR ID"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Note</label>
+                            <input
+                              type="text"
+                              value={editEntryData.note ?? ''}
+                              onChange={(e) => setEditEntryData(d => ({ ...d, note: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              placeholder="Optional note"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={onSaveEntryEdit}
+                            disabled={savingEntry}
+                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+                              savingEntry ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600 text-white shadow'
+                            }`}
+                          >
+                            {savingEntry ? 'Saving…' : '💾 Save Changes'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingEntryRealIdx(null); setEditEntryData({}); setEntryEditError(''); }}
+                            className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-100"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">{p.at?.toDate ? format(p.at.toDate(), 'dd MMM, HH:mm') : '—'}</div>
-                    </div>
-                    <div className="mt-1 text-xs text-gray-600">Method: {String(p.method || 'unknown').toUpperCase()}</div>
-                    {p.transactionId ? <div className="text-xs text-gray-600">Txn: {String(p.transactionId)}</div> : null}
-                    {p.transactionImageUrl ? (
-                      <div className="mt-1">
-                        <button
-                          type="button"
-                          onClick={() => setTxnLightboxUrl(p.transactionImageUrl)}
-                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
-                        >
-                          <Camera size={11} /> View Transaction Screenshot
-                        </button>
+                    );
+                  }
+
+                  // ── Normal view card ──
+                  return (
+                    <div key={realIdx} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-semibold text-gray-900">
+                          {p.amount > 0 ? `Fees: ${formatCurrency(p.amount)}` : ''}
+                          {p.amount > 0 && p.cautionDeposit > 0 ? ' + ' : ''}
+                          {p.cautionDeposit > 0 ? `Caution: ${formatCurrency(p.cautionDeposit)}` : ''}
+                          {p.amount === 0 && (!p.cautionDeposit || p.cautionDeposit === 0) ? formatCurrency(0) : ''}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-gray-500">{p.at?.toDate ? format(p.at.toDate(), 'dd MMM, HH:mm') : '—'}</div>
+                          {payHistoryEditEnabled && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingEntryRealIdx(realIdx);
+                                setEntryEditError('');
+                                setEditEntryData({
+                                  amount: typeof p.amount === 'number' ? p.amount : 0,
+                                  cautionDeposit: typeof p.cautionDeposit === 'number' ? p.cautionDeposit : 0,
+                                  method: p.method || 'cash',
+                                  transactionId: p.transactionId || '',
+                                  receiptNo: p.receiptNo || '',
+                                  note: p.note || '',
+                                });
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 transition-colors"
+                            >
+                              ✏️ Edit
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    ) : null}
-                    {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
-                    <div className="text-xs mt-1">
-                      {p.note
-                        ? <span className="italic text-gray-700">📝 {String(p.note)}</span>
-                        : <span className="text-gray-400">No note</span>
-                      }
+                      <div className="mt-1 text-xs text-gray-600">Method: {String(p.method || 'unknown').toUpperCase()}</div>
+                      {p.transactionId ? <div className="text-xs text-gray-600">Txn: {String(p.transactionId)}</div> : null}
+                      {p.transactionImageUrl ? (
+                        <div className="mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setTxnLightboxUrl(p.transactionImageUrl)}
+                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                          >
+                            <Camera size={11} /> View Transaction Screenshot
+                          </button>
+                        </div>
+                      ) : null}
+                      {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
+                      {p.editedAt ? <div className="text-xs text-orange-500 mt-0.5">📝 Edited on {p.editedAt?.toDate ? format(p.editedAt.toDate(), 'dd MMM, HH:mm') : '—'}</div> : null}
+                      <div className="text-xs mt-1">
+                        {p.note
+                          ? <span className="italic text-gray-700">📝 {String(p.note)}</span>
+                          : <span className="text-gray-400">No note</span>
+                        }
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>
@@ -3481,27 +3774,11 @@ function FeesPage() {
               </button>
             </div>
             <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 min-h-48 flex items-center justify-center">
-              <img
+              <OcrSelectableImage
                 src={txnLightboxUrl}
                 alt="Transaction Screenshot"
                 className="w-full rounded-xl object-contain max-h-[70vh]"
-                onLoad={(e) => {
-                  e.target.style.opacity = 1;
-                  const spinner = e.target.parentElement?.querySelector('#txn-spinner');
-                  if (spinner) spinner.style.display = 'none';
-                }}
-                style={{ opacity: 0, transition: 'opacity 0.3s ease' }}
               />
-              <div
-                id="txn-spinner"
-                className="absolute inset-0 flex items-center justify-center bg-gray-50"
-                style={{pointerEvents: 'none'}}
-              >
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-                  <span className="text-xs text-gray-400">Loading screenshot…</span>
-                </div>
-              </div>
             </div>
             <div className="mt-2 flex items-center justify-between">
               <p className="text-xs text-gray-400">Click outside or × to close</p>
@@ -3676,42 +3953,150 @@ function AccountsPage() {
       setFeesEditToggling(false);
     }
   };
+
+  // Payment History edit mode toggle — stored in Firestore config/payHistoryEditMode
+  const [payHistoryEditEnabled, setPayHistoryEditEnabled] = useState(false);
+  const [payHistoryEditToggling, setPayHistoryEditToggling] = useState(false);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'config', 'payHistoryEditMode'),
+      (snap) => setPayHistoryEditEnabled(snap.exists() ? Boolean(snap.data()?.enabled) : false),
+      () => setPayHistoryEditEnabled(false)
+    );
+    return () => unsub();
+  }, []);
+  const togglePayHistoryEdit = async () => {
+    setPayHistoryEditToggling(true);
+    try {
+      await setDoc(doc(db, 'config', 'payHistoryEditMode'), { enabled: !payHistoryEditEnabled }, { merge: true });
+    } catch (err) {
+      console.error('Failed to toggle payment history edit mode:', err);
+    } finally {
+      setPayHistoryEditToggling(false);
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [incomeViewMode, setIncomeViewMode] = useState('monthly'); // 'monthly' or 'daily'
   const [expenditureViewMode, setExpenditureViewMode] = useState('monthly'); // 'monthly' or 'daily'
 
-  // Reset selectedDate and view modes when month selection changes
+  // Only sync selectedDate when monthCursor changes to a month outside selectedDate
   useEffect(() => {
-    const today = new Date();
-    if (monthCursor.getFullYear() === today.getFullYear() && monthCursor.getMonth() === today.getMonth()) {
-      setSelectedDate(format(today, 'yyyy-MM-dd'));
-    } else {
+    if (!selectedDate) {
       setSelectedDate(format(monthCursor, 'yyyy-MM-dd'));
+      return;
     }
-    setIncomeViewMode('monthly');
-    setExpenditureViewMode('monthly');
+    const parts = selectedDate.split('-');
+    if (parts.length === 3) {
+      const selYr = parseInt(parts[0], 10);
+      const selMo = parseInt(parts[1], 10) - 1;
+      if (selYr !== monthCursor.getFullYear() || selMo !== monthCursor.getMonth()) {
+        setSelectedDate(format(monthCursor, 'yyyy-MM-dd'));
+        setIncomeViewMode('monthly');
+        setExpenditureViewMode('monthly');
+      }
+    }
   }, [monthCursor]);
-
-  const displayedIncomeEntries = useMemo(() => {
-    const allIncome = statsEntries.filter((e) => e.isIncome);
-    if (incomeViewMode === 'daily' && selectedDate) {
-      return allIncome.filter((e) => e.date === selectedDate);
-    }
-    return allIncome;
-  }, [statsEntries, incomeViewMode, selectedDate]);
-
-  const displayedExpenditureEntries = useMemo(() => {
-    const allExp = statsEntries.filter((e) => !e.isIncome);
-    if (expenditureViewMode === 'daily' && selectedDate) {
-      return allExp.filter((e) => e.date === selectedDate);
-    }
-    return allExp;
-  }, [statsEntries, expenditureViewMode, selectedDate]);
 
   const monthLabel = useMemo(() => format(monthCursor, 'MMMM yyyy'), [monthCursor]);
   const monthStartISO = useMemo(() => format(new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1), 'yyyy-MM-dd'), [monthCursor]);
   const monthEndISO = useMemo(() => format(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0), 'yyyy-MM-dd'), [monthCursor]);
   const todayISO = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
+
+  const [allFeeIncomeEntries, setAllFeeIncomeEntries] = useState([]);
+  const [feesByDate, setFeesByDate] = useState({});
+
+  // Real-time listener for ALL fee payments in the fees collection.
+  // This automatically generates individual income records for EVERY fee payment history entry,
+  // so they appear in the Accounts "Monthly Income" table regardless of whether "Save Income Entry" was clicked in Daily Tracking.
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'fees'),
+      (snap) => {
+        const methodMap = {
+          cash: 'Cash',
+          phonepe: 'PhonePe',
+          googlepay: 'Google Pay',
+          scanner: 'Scanner (QR)',
+          swipe: 'Card',
+          check: 'Cheque',
+          upi: 'UPI',
+        };
+
+        const entries = [];
+        const byDate = {};
+
+        for (const docSnap of snap.docs) {
+          const feeData = docSnap.data();
+          const history = Array.isArray(feeData?.paymentHistory) ? feeData.paymentHistory : [];
+
+          for (let i = 0; i < history.length; i++) {
+            const p = history[i];
+            const at = p?.at?.toDate ? p.at.toDate() : null;
+            if (!at) continue;
+
+            const dateStr = format(at, 'yyyy-MM-dd');
+            const totalPaid = Number(p?.amount || 0) + Number(p?.cautionDeposit || 0);
+            if (totalPaid <= 0) continue;
+
+            byDate[dateStr] = (byDate[dateStr] || 0) + totalPaid;
+
+            const modeRaw = String(p.method || 'cash').toLowerCase();
+            const modeFormatted = methodMap[modeRaw] || String(p.method || 'Cash').toUpperCase();
+
+            entries.push({
+              id: `fee_pmt_${docSnap.id}_${i}_${at.getTime()}`,
+              date: dateStr,
+              income: totalPaid,
+              isIncome: true,
+              source: 'Fees',
+              paymentMode: modeFormatted,
+              utrRef: p.transactionId || '',
+              studentHtno: feeData.admissionNumber || '',
+              studentName: feeData.studentName || '',
+              note: p.note || '',
+              timestamp: at.getTime(),
+            });
+          }
+        }
+
+        setFeesByDate(byDate);
+        setAllFeeIncomeEntries(entries);
+      },
+      () => {
+        setFeesByDate({});
+        setAllFeeIncomeEntries([]);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  const allCombinedIncomeEntries = useMemo(() => {
+    const nonFeeStats = statsEntries.filter((e) => e.isIncome && e.source !== 'Fees');
+    const combined = [...allFeeIncomeEntries, ...nonFeeStats];
+    return combined.sort((a, b) => {
+      const dateCmp = (b.date || '').localeCompare(a.date || '');
+      if (dateCmp !== 0) return dateCmp;
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+  }, [allFeeIncomeEntries, statsEntries]);
+
+  const displayedIncomeEntries = useMemo(() => {
+    let list = allCombinedIncomeEntries;
+    list = list.filter((e) => e.date >= monthStartISO && e.date <= monthEndISO);
+    if (incomeViewMode === 'daily' && selectedDate) {
+      list = list.filter((e) => e.date === selectedDate);
+    }
+    return list;
+  }, [allCombinedIncomeEntries, incomeViewMode, selectedDate, monthStartISO, monthEndISO]);
+
+  const displayedExpenditureEntries = useMemo(() => {
+    let allExp = statsEntries.filter((e) => !e.isIncome);
+    allExp = allExp.filter((e) => e.date >= monthStartISO && e.date <= monthEndISO);
+    if (expenditureViewMode === 'daily' && selectedDate) {
+      return allExp.filter((e) => e.date === selectedDate);
+    }
+    return allExp;
+  }, [statsEntries, expenditureViewMode, selectedDate, monthStartISO, monthEndISO]);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -3912,36 +4297,7 @@ function AccountsPage() {
   }, []);
 
 
-  const [feesByDate, setFeesByDate] = useState({});
 
-  // Load ALL fee payment history and aggregate by date (tuition + caution deposit)
-  // This is the source-of-truth for income — same approach as Daily Tracking's feesIncome
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const snap = await getDocs(collection(db, 'fees'));
-        if (cancelled) return;
-        const byDate = {};
-        for (const docSnap of snap.docs) {
-          const data = docSnap.data();
-          const history = Array.isArray(data?.paymentHistory) ? data.paymentHistory : [];
-          for (const p of history) {
-            const at = p?.at?.toDate ? p.at.toDate() : null;
-            if (!at) continue;
-            const dateStr = format(at, 'yyyy-MM-dd');
-            const totalPaid = Number(p?.amount || 0) + Number(p?.cautionDeposit || 0);
-            if (totalPaid <= 0) continue;
-            byDate[dateStr] = (byDate[dateStr] || 0) + totalPaid;
-          }
-        }
-        if (!cancelled) setFeesByDate(byDate);
-      } catch {
-        // silently ignore
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   // Build date-wise summary:
   // - Income comes directly from fees paymentHistory (tuition + caution deposit) — the ground truth
@@ -4000,29 +4356,53 @@ function AccountsPage() {
         </div>
         {/* Fees Edit Toggle */}
         <div className="flex-shrink-0">
-          <div className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 shadow-sm transition-all ${
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 shadow-sm transition-all ${
             feesEditEnabled ? 'bg-amber-50 border-amber-400' : 'bg-gray-50 border-gray-200'
           }`}>
-            <span className={`text-xs font-bold uppercase tracking-wider ${
+            <span className={`text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
               feesEditEnabled ? 'text-amber-700' : 'text-gray-500'
-            }`}>Fees Edit Mode</span>
+            }`}>Fees Edit</span>
             <button
               onClick={toggleFeesEdit}
               disabled={feesEditToggling}
-              title={feesEditEnabled ? 'Click to disable fees editing' : 'Click to enable fees editing'}
-              className={`relative inline-flex items-center w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
-                feesEditEnabled
-                  ? 'bg-amber-500 focus:ring-amber-400'
-                  : 'bg-gray-300 focus:ring-gray-400'
+              title={feesEditEnabled ? 'Disable fees editing' : 'Enable fees editing'}
+              className={`relative inline-flex items-center w-10 h-5 rounded-full transition-colors duration-300 focus:outline-none ${
+                feesEditEnabled ? 'bg-amber-500' : 'bg-gray-300'
               } ${feesEditToggling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
             >
-              <span className={`inline-block w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-300 ${
-                feesEditEnabled ? 'translate-x-8' : 'translate-x-1'
+              <span className={`inline-block w-3.5 h-3.5 rounded-full bg-white shadow transform transition-transform duration-300 ${
+                feesEditEnabled ? 'translate-x-5' : 'translate-x-1'
               }`} />
             </button>
-            <span className={`text-xs font-semibold ${
+            <span className={`text-xs font-semibold w-6 ${
               feesEditEnabled ? 'text-amber-600' : 'text-gray-400'
-            }`}>{feesEditEnabled ? '🔓 ON' : '🔒 OFF'}</span>
+            }`}>{feesEditEnabled ? 'ON' : 'OFF'}</span>
+          </div>
+        </div>
+
+        {/* Payment History Edit Toggle */}
+        <div className="flex-shrink-0">
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 shadow-sm transition-all ${
+            payHistoryEditEnabled ? 'bg-purple-50 border-purple-400' : 'bg-gray-50 border-gray-200'
+          }`}>
+            <span className={`text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
+              payHistoryEditEnabled ? 'text-purple-700' : 'text-gray-500'
+            }`}>History Edit</span>
+            <button
+              onClick={togglePayHistoryEdit}
+              disabled={payHistoryEditToggling}
+              title={payHistoryEditEnabled ? 'Disable history editing' : 'Enable history editing'}
+              className={`relative inline-flex items-center w-10 h-5 rounded-full transition-colors duration-300 focus:outline-none ${
+                payHistoryEditEnabled ? 'bg-purple-500' : 'bg-gray-300'
+              } ${payHistoryEditToggling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              <span className={`inline-block w-3.5 h-3.5 rounded-full bg-white shadow transform transition-transform duration-300 ${
+                payHistoryEditEnabled ? 'translate-x-5' : 'translate-x-1'
+              }`} />
+            </button>
+            <span className={`text-xs font-semibold w-6 ${
+              payHistoryEditEnabled ? 'text-purple-600' : 'text-gray-400'
+            }`}>{payHistoryEditEnabled ? 'ON' : 'OFF'}</span>
           </div>
         </div>
       </div>
@@ -4255,8 +4635,7 @@ function AccountsPage() {
                   <td className="px-4 py-3 text-right font-bold text-green-700">{formatCurrency(Number(e.income || 0))}</td>
                   <td className="px-4 py-3 text-gray-600">{e.paymentMode || '—'}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">
-                    {(e.paymentMode === 'UPI' || e.paymentMode === 'Cheque' || e.paymentMode === 'Bank Transfer')
-                      ? (e.utrRef || '—') : '—'}
+                    {e.utrRef || '—'}
                   </td>
                   <td className="px-4 py-3">
                     {e.source === 'Fees' ? (

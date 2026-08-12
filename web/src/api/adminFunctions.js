@@ -8,4 +8,5 @@ export const setUserRole = httpsCallable(functions, 'setUserRole');
 export const updateStudentMarks = httpsCallable(functions, 'updateStudentMarks');
 export const addStudentRemark = httpsCallable(functions, 'addStudentRemark');
 export const updateFees = httpsCallable(functions, 'updateFees');
+export const editPaymentEntry = httpsCallable(functions, 'editPaymentEntry');
 export const addStatisticsEntry = httpsCallable(functions, 'addStatisticsEntry');

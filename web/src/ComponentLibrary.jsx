@@ -86,12 +86,12 @@ export function SummaryCard({ title, value, change, color = 'primary', icon }) {
   };
 
   return (
-    <div className={`bg-gradient-to-br ${bgColors[color]} p-6 rounded-2xl border ${borderColors[color]}`}>
-      <div className="flex justify-between items-start mb-4">
-        <h3 className="text-sm font-medium text-gray-700">{title}</h3>
-        {icon && <span className="text-2xl">{icon}</span>}
+    <div className={`bg-gradient-to-br ${bgColors[color]} p-4 rounded-2xl border ${borderColors[color]} min-w-0 overflow-hidden`}>
+      <div className="flex justify-between items-start mb-2">
+        <h3 className="text-sm font-medium text-gray-700 truncate">{title}</h3>
+        {icon && <span className="text-xl flex-shrink-0 ml-1">{icon}</span>}
       </div>
-      <p className={`text-4xl font-bold ${textColors[color]}`}>{value}</p>
+      <p className={`text-xl font-bold ${textColors[color]} break-all leading-tight`}>{value}</p>
       {change && <p className="text-sm text-green-600 mt-2">↑ {change}</p>}
     </div>
   );
