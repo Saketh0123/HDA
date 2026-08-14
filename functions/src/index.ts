@@ -1660,6 +1660,80 @@ export const editPaymentEntry = onCall(async (request) => {
   }
 });
 
+// ── Delete a specific payment history entry ──────────────────────────────────
+export const deletePaymentEntry = onCall(async (request) => {
+  const { uid: adminId } = requireAdmin(request);
+
+  const studentId = assertString(request.data?.studentId, 'studentId');
+  const entryIndex = typeof request.data?.entryIndex === 'number' ? request.data.entryIndex : -1;
+  if (entryIndex < 0) throw new HttpsError('invalid-argument', 'entryIndex is required and must be >= 0.');
+
+  const feesRef     = db.collection('fees').doc(studentId);
+  const accountsRef = db.collection('accounts').doc('summary');
+
+  try {
+    await db.runTransaction(async (tx) => {
+      // ── ALL READS FIRST ──
+      const feesSnap = await tx.get(feesRef);
+      const accSnap  = await tx.get(accountsRef);
+
+      if (!feesSnap.exists) throw new HttpsError('not-found', 'Fees record not found for this student.');
+
+      const feesData = feesSnap.data() as any;
+      const history: any[] = Array.isArray(feesData.paymentHistory) ? [...feesData.paymentHistory] : [];
+
+      if (entryIndex < 0 || entryIndex >= history.length) {
+        throw new HttpsError('invalid-argument', `Invalid entry index ${entryIndex}. History has ${history.length} entries.`);
+      }
+
+      const prevPaid    = typeof feesData.paidAmount     === 'number' ? feesData.paidAmount     : 0;
+      const prevCaution = typeof feesData.cautionDeposit === 'number' ? feesData.cautionDeposit : 0;
+
+      // Remove entry at entryIndex
+      history.splice(entryIndex, 1);
+
+      // Recalculate totals from remaining entries
+      let newPaid    = 0;
+      let newCaution = 0;
+      for (const e of history) {
+        newPaid    += typeof e?.amount         === 'number' ? e.amount         : 0;
+        newCaution += typeof e?.cautionDeposit === 'number' ? e.cautionDeposit : 0;
+      }
+
+      const totalFees       = typeof feesData.totalFees        === 'number' ? feesData.totalFees        : 0;
+      const newPending      = Math.max(0, totalFees - newPaid);
+      const newFeeStatus    = newPaid <= 0 ? 'none' : newPaid >= totalFees ? 'full' : 'half';
+      const prevCautionUsed = typeof feesData.cautionDepositUsed === 'number' ? feesData.cautionDepositUsed : 0;
+
+      // ── ALL WRITES AFTER READS ──
+      tx.set(feesRef, {
+        paymentHistory:          history,
+        paidAmount:              newPaid,
+        pendingAmount:           newPending,
+        feeStatus:               newFeeStatus,
+        cautionDeposit:          newCaution,
+        cautionDepositRemaining: Math.max(0, newCaution - prevCautionUsed),
+        lastUpdated:             admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      // Deduct from accounts/summary
+      const deltaCollected = (newPaid - prevPaid) + (newCaution - prevCaution);
+      if (deltaCollected !== 0 && accSnap.exists) {
+        const accData = accSnap.data() as any;
+        tx.set(accountsRef, {
+          totalCollected: Math.max(0, (typeof accData.totalCollected === 'number' ? accData.totalCollected : 0) + deltaCollected),
+        }, { merge: true });
+      }
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    const message = typeof err?.message === 'string' && err.message.trim() ? err.message.trim() : 'Unexpected error deleting payment entry.';
+    throw new HttpsError('internal', message);
+  }
+});
+
 export const addStatisticsEntry = onCall(async (request) => {
   const { uid: adminId } = requireAdmin(request);
 

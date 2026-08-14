@@ -9,4 +9,5 @@ export const updateStudentMarks = httpsCallable(functions, 'updateStudentMarks')
 export const addStudentRemark = httpsCallable(functions, 'addStudentRemark');
 export const updateFees = httpsCallable(functions, 'updateFees');
 export const editPaymentEntry = httpsCallable(functions, 'editPaymentEntry');
+export const deletePaymentEntry = httpsCallable(functions, 'deletePaymentEntry');
 export const addStatisticsEntry = httpsCallable(functions, 'addStatisticsEntry');

@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.editPaymentEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.adminResetStudentPassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
+exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.deletePaymentEntry = exports.editPaymentEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.adminResetStudentPassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const params_1 = require("firebase-functions/params");
@@ -1353,6 +1353,70 @@ exports.editPaymentEntry = (0, https_1.onCall)(async (request) => {
         if (err instanceof https_1.HttpsError)
             throw err;
         const message = typeof err?.message === 'string' && err.message.trim() ? err.message.trim() : 'Unexpected error editing payment entry.';
+        throw new https_1.HttpsError('internal', message);
+    }
+});
+// ── Delete a specific payment history entry ──────────────────────────────────
+exports.deletePaymentEntry = (0, https_1.onCall)(async (request) => {
+    const { uid: adminId } = requireAdmin(request);
+    const studentId = assertString(request.data?.studentId, 'studentId');
+    const entryIndex = typeof request.data?.entryIndex === 'number' ? request.data.entryIndex : -1;
+    if (entryIndex < 0)
+        throw new https_1.HttpsError('invalid-argument', 'entryIndex is required and must be >= 0.');
+    const feesRef = db.collection('fees').doc(studentId);
+    const accountsRef = db.collection('accounts').doc('summary');
+    try {
+        await db.runTransaction(async (tx) => {
+            // ── ALL READS FIRST ──
+            const feesSnap = await tx.get(feesRef);
+            const accSnap = await tx.get(accountsRef);
+            if (!feesSnap.exists)
+                throw new https_1.HttpsError('not-found', 'Fees record not found for this student.');
+            const feesData = feesSnap.data();
+            const history = Array.isArray(feesData.paymentHistory) ? [...feesData.paymentHistory] : [];
+            if (entryIndex < 0 || entryIndex >= history.length) {
+                throw new https_1.HttpsError('invalid-argument', `Invalid entry index ${entryIndex}. History has ${history.length} entries.`);
+            }
+            const prevPaid = typeof feesData.paidAmount === 'number' ? feesData.paidAmount : 0;
+            const prevCaution = typeof feesData.cautionDeposit === 'number' ? feesData.cautionDeposit : 0;
+            // Remove entry at entryIndex
+            history.splice(entryIndex, 1);
+            // Recalculate totals from remaining entries
+            let newPaid = 0;
+            let newCaution = 0;
+            for (const e of history) {
+                newPaid += typeof e?.amount === 'number' ? e.amount : 0;
+                newCaution += typeof e?.cautionDeposit === 'number' ? e.cautionDeposit : 0;
+            }
+            const totalFees = typeof feesData.totalFees === 'number' ? feesData.totalFees : 0;
+            const newPending = Math.max(0, totalFees - newPaid);
+            const newFeeStatus = newPaid <= 0 ? 'none' : newPaid >= totalFees ? 'full' : 'half';
+            const prevCautionUsed = typeof feesData.cautionDepositUsed === 'number' ? feesData.cautionDepositUsed : 0;
+            // ── ALL WRITES AFTER READS ──
+            tx.set(feesRef, {
+                paymentHistory: history,
+                paidAmount: newPaid,
+                pendingAmount: newPending,
+                feeStatus: newFeeStatus,
+                cautionDeposit: newCaution,
+                cautionDepositRemaining: Math.max(0, newCaution - prevCautionUsed),
+                lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            // Deduct from accounts/summary
+            const deltaCollected = (newPaid - prevPaid) + (newCaution - prevCaution);
+            if (deltaCollected !== 0 && accSnap.exists) {
+                const accData = accSnap.data();
+                tx.set(accountsRef, {
+                    totalCollected: Math.max(0, (typeof accData.totalCollected === 'number' ? accData.totalCollected : 0) + deltaCollected),
+                }, { merge: true });
+            }
+        });
+        return { success: true };
+    }
+    catch (err) {
+        if (err instanceof https_1.HttpsError)
+            throw err;
+        const message = typeof err?.message === 'string' && err.message.trim() ? err.message.trim() : 'Unexpected error deleting payment entry.';
         throw new https_1.HttpsError('internal', message);
     }
 });

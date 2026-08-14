@@ -94,6 +94,7 @@ const updateStudentMarks = httpsCallable(functions, 'updateStudentMarks');
 const addStudentRemark = httpsCallable(functions, 'addStudentRemark');
 const updateFees = httpsCallable(functions, 'updateFees');
 const editPaymentEntry = httpsCallable(functions, 'editPaymentEntry');
+const deletePaymentEntry = httpsCallable(functions, 'deletePaymentEntry');
 const addStatisticsEntry = httpsCallable(functions, 'addStatisticsEntry');
 const adminMigrateStudents = httpsCallable(functions, 'adminMigrateStudents');
 const adminDeleteStudent = httpsCallable(functions, 'adminDeleteStudent');
@@ -2992,12 +2993,17 @@ function FeesPage() {
     return () => unsub();
   }, []);
 
-  // Payment history entry editing state
+  // Payment history entry editing & deletion state
   const [editingEntryRealIdx, setEditingEntryRealIdx] = useState(null);
   const [editEntryData, setEditEntryData] = useState({});
   const [savingEntry, setSavingEntry] = useState(false);
   const [entryEditError, setEntryEditError] = useState('');
   const [entryEditOk, setEntryEditOk] = useState(false);
+
+  const [deletingEntryTarget, setDeletingEntryTarget] = useState(null); // { realIdx, entry }
+  const [deletingEntrySaving, setDeletingEntrySaving] = useState(false);
+  const [deleteEntryError, setDeleteEntryError] = useState('');
+  const [entryDeleteOk, setEntryDeleteOk] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -3243,6 +3249,28 @@ function FeesPage() {
       setEntryEditError(msg || 'Failed to save entry.');
     } finally {
       setSavingEntry(false);
+    }
+  };
+
+  // Confirm and execute deletion of a payment entry
+  const onConfirmDeleteEntry = async () => {
+    if (!deletingEntryTarget || !selectedStudentId) return;
+    setDeletingEntrySaving(true);
+    setDeleteEntryError('');
+    try {
+      if (auth.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      await deletePaymentEntry({
+        studentId: selectedStudentId,
+        entryIndex: deletingEntryTarget.realIdx,
+      });
+      setEntryDeleteOk(true);
+      setDeletingEntryTarget(null);
+      setTimeout(() => setEntryDeleteOk(false), 3000);
+    } catch (err) {
+      const msg = typeof err?.message === 'string' ? err.message.replace(/^FirebaseError:\s*/i, '').trim() : '';
+      setDeleteEntryError(msg || 'Failed to delete payment entry.');
+    } finally {
+      setDeletingEntrySaving(false);
     }
   };
 
@@ -3563,11 +3591,16 @@ function FeesPage() {
 
           <Card
             title="Payment History"
-            subtitle={payHistoryEditEnabled ? '✏️ Edit mode ON — click Edit on any entry' : 'Latest first'}
+            subtitle={payHistoryEditEnabled ? '✏️ Edit mode ON — click Edit or Delete on any entry' : 'Latest first'}
           >
             {entryEditOk && (
               <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-300 rounded-lg text-xs text-green-800 font-medium">
                 <span>✓</span> <span>Payment entry updated successfully!</span>
+              </div>
+            )}
+            {entryDeleteOk && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-300 rounded-lg text-xs text-red-800 font-medium">
+                <span>🗑️</span> <span>Payment entry deleted and deducted from Accounts successfully!</span>
               </div>
             )}
             {entryEditError && (
@@ -3701,24 +3734,36 @@ function FeesPage() {
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-gray-500">{p.at?.toDate ? format(p.at.toDate(), 'dd MMM, HH:mm') : '—'}</div>
                           {payHistoryEditEnabled && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingEntryRealIdx(realIdx);
-                                setEntryEditError('');
-                                setEditEntryData({
-                                  amount: typeof p.amount === 'number' ? p.amount : 0,
-                                  cautionDeposit: typeof p.cautionDeposit === 'number' ? p.cautionDeposit : 0,
-                                  method: p.method || 'cash',
-                                  transactionId: p.transactionId || '',
-                                  receiptNo: p.receiptNo || '',
-                                  note: p.note || '',
-                                });
-                              }}
-                              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 transition-colors"
-                            >
-                              ✏️ Edit
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingEntryRealIdx(realIdx);
+                                  setEntryEditError('');
+                                  setEditEntryData({
+                                    amount: typeof p.amount === 'number' ? p.amount : 0,
+                                    cautionDeposit: typeof p.cautionDeposit === 'number' ? p.cautionDeposit : 0,
+                                    method: p.method || 'cash',
+                                    transactionId: p.transactionId || '',
+                                    receiptNo: p.receiptNo || '',
+                                    note: p.note || '',
+                                  });
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 transition-colors"
+                              >
+                                ✏️ Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeleteEntryError('');
+                                  setDeletingEntryTarget({ realIdx, entry: p });
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 transition-colors"
+                              >
+                                🗑️ Delete
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -3755,7 +3800,7 @@ function FeesPage() {
       {/* Transaction image lightbox */}
       {txnLightboxUrl ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs"
           onClick={() => setTxnLightboxUrl('')}
         >
           <div
@@ -3790,6 +3835,61 @@ function FeesPage() {
               >
                 Open full size ↗
               </a>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Delete confirmation modal */}
+      {deletingEntryTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-gray-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                ⚠️ Delete Payment Entry
+              </span>
+              <button
+                onClick={() => setDeletingEntryTarget(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Are you sure you want to delete this payment entry of{' '}
+              <strong className="text-gray-900 font-bold">
+                {formatCurrency(
+                  Number(deletingEntryTarget.entry?.amount || 0) +
+                    Number(deletingEntryTarget.entry?.cautionDeposit || 0)
+                )}
+              </strong>
+              {deletingEntryTarget.entry?.at?.toDate ? ` (recorded on ${format(deletingEntryTarget.entry.at.toDate(), 'dd MMM, HH:mm')})` : ''}?
+            </p>
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
+              ⚠️ This action will deduct this amount from the Accounts income totals and recalculate the student's pending balance.
+            </div>
+            {deleteEntryError && (
+              <div className="p-3 bg-red-100 border border-red-300 rounded-xl text-xs text-red-900 font-medium">
+                {deleteEntryError}
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingEntryTarget(null)}
+                disabled={deletingEntrySaving}
+                className="px-4 py-2 rounded-xl text-sm font-semibold border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmDeleteEntry}
+                disabled={deletingEntrySaving}
+                className="px-4 py-2 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white shadow-md transition-all flex items-center gap-1.5"
+              >
+                {deletingEntrySaving ? 'Deleting…' : '🗑️ Yes, Delete'}
+              </button>
             </div>
           </div>
         </div>
