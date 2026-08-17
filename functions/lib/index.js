@@ -1190,6 +1190,12 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
         const pendingAmount = totalFees - paidAmount;
         const feeStatus = pendingAmount === 0 ? 'full' : paidAmount > 0 ? 'half' : 'none';
         const historyEntry = request.data?.paymentEntry;
+        // Accept optional custom payment date from admin (ISO string e.g. "2026-08-10T00:00:00.000Z")
+        const customDateStr = typeof request.data?.paymentDate === 'string' && request.data.paymentDate.trim()
+            ? request.data.paymentDate.trim() : null;
+        const paymentTimestamp = customDateStr
+            ? admin.firestore.Timestamp.fromDate(new Date(customDateStr))
+            : admin.firestore.Timestamp.now();
         const paymentEntry = historyEntry
             ? {
                 amount: assertNonNegative(historyEntry.amount, 'paymentEntry.amount'),
@@ -1205,9 +1211,8 @@ exports.updateFees = (0, https_1.onCall)(async (request) => {
                     : null,
                 cautionDeposit: cautionary,
                 receiptNo: receiptNo || null,
-                // Firestore does not allow serverTimestamp() sentinels inside arrayUnion().
-                // Use a concrete Timestamp value instead.
-                at: admin.firestore.Timestamp.now(),
+                // Use admin-selected date if provided, otherwise current server time.
+                at: paymentTimestamp,
             }
             : null;
         const feesRef = db.collection('fees').doc(studentId);
@@ -1288,6 +1293,9 @@ exports.editPaymentEntry = (0, https_1.onCall)(async (request) => {
     const updatedNote = typeof request.data?.note === 'string' && request.data.note.trim() ? request.data.note.trim() : null;
     const updatedTxnId = typeof request.data?.transactionId === 'string' && request.data.transactionId.trim() ? request.data.transactionId.trim() : null;
     const updatedReceiptNo = typeof request.data?.receiptNo === 'string' ? request.data.receiptNo.trim() : '';
+    // Optional new date for this entry (admin can back-date/forward-date)
+    const updatedDateStr = typeof request.data?.newDate === 'string' && request.data.newDate.trim() ? request.data.newDate.trim() : null;
+    const updatedTimestamp = updatedDateStr ? admin.firestore.Timestamp.fromDate(new Date(updatedDateStr)) : null;
     const feesRef = db.collection('fees').doc(studentId);
     const accountsRef = db.collection('accounts').doc('summary');
     try {
@@ -1305,7 +1313,7 @@ exports.editPaymentEntry = (0, https_1.onCall)(async (request) => {
             const oldEntry = history[entryIndex];
             const prevPaid = typeof feesData.paidAmount === 'number' ? feesData.paidAmount : 0;
             const prevCaution = typeof feesData.cautionDeposit === 'number' ? feesData.cautionDeposit : 0;
-            // Replace entry values, keep original timestamp
+            // Replace entry values; update timestamp only if admin explicitly chose a new date
             history[entryIndex] = {
                 ...oldEntry,
                 amount: updatedAmount,
@@ -1314,6 +1322,7 @@ exports.editPaymentEntry = (0, https_1.onCall)(async (request) => {
                 note: updatedNote,
                 receiptNo: updatedReceiptNo || null,
                 cautionDeposit: updatedCaution,
+                ...(updatedTimestamp ? { at: updatedTimestamp } : {}),
                 editedAt: admin.firestore.Timestamp.now(),
                 editedBy: adminId,
             };

@@ -2965,6 +2965,9 @@ function FeesPage() {
   const [transactionImagePreview, setTransactionImagePreview] = useState('');
   const [txnLightboxUrl, setTxnLightboxUrl] = useState(''); // for viewing saved screenshots inline
   const [noteText, setNoteText] = useState('');
+  // Payment date: defaults to today, admin can pick any past date
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const [paymentDate, setPaymentDate] = useState(todayISO);
   const [saving, setSaving] = useState(false);
   const [savingTotalFees, setSavingTotalFees] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -3004,6 +3007,9 @@ function FeesPage() {
   const [deletingEntrySaving, setDeletingEntrySaving] = useState(false);
   const [deleteEntryError, setDeleteEntryError] = useState('');
   const [entryDeleteOk, setEntryDeleteOk] = useState(false);
+  // Separate date-only picker state (outside edit mode)
+  const [datePickingEntryIdx, setDatePickingEntryIdx] = useState(null);
+  const [datePickingValue, setDatePickingValue] = useState('');
 
   useEffect(() => {
     setCurrentPage(1);
@@ -3156,6 +3162,8 @@ function FeesPage() {
         paidAmount: Number(nextPaid),
         cautionDeposit: Number(caution),
         receiptNo: String(receiptNo || '').trim(),
+        // Pass admin-selected date so back-dated payments are recorded correctly
+        paymentDate: paymentDate ? new Date(paymentDate).toISOString() : null,
         paymentEntry: {
           amount: Number(pay),
           method: payMethod,
@@ -3172,6 +3180,7 @@ function FeesPage() {
       setTransactionImage(null);
       setTransactionImagePreview('');
       setNoteText('');
+      setPaymentDate(todayISO());
       setSaveOk(true);
     } catch (err) {
       const code = typeof err?.code === 'string' ? err.code : '';
@@ -3239,6 +3248,8 @@ function FeesPage() {
         transactionId: editEntryData.transactionId || null,
         receiptNo: editEntryData.receiptNo || '',
         note: editEntryData.note || null,
+        // Pass new date if admin changed it
+        newDate: editEntryData.newDate ? new Date(editEntryData.newDate).toISOString() : null,
       });
       setEntryEditOk(true);
       setEditingEntryRealIdx(null);
@@ -3271,6 +3282,38 @@ function FeesPage() {
       setDeleteEntryError(msg || 'Failed to delete payment entry.');
     } finally {
       setDeletingEntrySaving(false);
+    }
+  };
+
+  // Save only the date of an existing payment entry (without opening full edit mode)
+  const onSaveDateChange = async (realIdx) => {
+    if (!datePickingValue || !selectedStudentId) return;
+    setSavingEntry(true);
+    setEntryEditError('');
+    setEntryEditOk(false);
+    const p = paymentHistory[realIdx];
+    try {
+      if (auth.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      await editPaymentEntry({
+        studentId: selectedStudentId,
+        entryIndex: realIdx,
+        amount: typeof p.amount === 'number' ? p.amount : 0,
+        cautionDeposit: typeof p.cautionDeposit === 'number' ? p.cautionDeposit : 0,
+        method: p.method || 'cash',
+        transactionId: p.transactionId || null,
+        receiptNo: p.receiptNo || '',
+        note: p.note || null,
+        newDate: new Date(datePickingValue).toISOString(),
+      });
+      setEntryEditOk(true);
+      setDatePickingEntryIdx(null);
+      setDatePickingValue('');
+      setTimeout(() => setEntryEditOk(false), 3000);
+    } catch (err) {
+      const msg = typeof err?.message === 'string' ? err.message.replace(/^FirebaseError:\s*/i, '').trim() : '';
+      setEntryEditError(msg || 'Failed to update date.');
+    } finally {
+      setSavingEntry(false);
     }
   };
 
@@ -3582,6 +3625,23 @@ function FeesPage() {
                     onChange={(e) => setNoteText(e.target.value)}
                   />
                 </div>
+                {/* Payment Date picker — lets admin backdate payments */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    📅 Payment Date
+                    <span className="ml-2 text-xs text-gray-400 font-normal">(change if payment was on a different day)</span>
+                  </label>
+                  <input
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    className="px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+                  />
+                  {paymentDate !== todayISO() && (
+                    <p className="text-xs text-amber-600 mt-1 font-medium">⚠️ Backdated payment — will be recorded on {new Date(paymentDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
+                  )}
+                </div>
               </div>
               <div className="text-sm text-gray-700">
                 Amount in words: <span className="font-semibold">{amountToWordsINR(pay + caution)}</span>
@@ -3765,6 +3825,22 @@ function FeesPage() {
                               </button>
                             </div>
                           )}
+                          {/* 📅 Date button — always visible, outside edit mode gate */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const existing = p.at?.toDate ? p.at.toDate().toISOString().slice(0, 10) : todayISO();
+                              setDatePickingEntryIdx(datePickingEntryIdx === realIdx ? null : realIdx);
+                              setDatePickingValue(existing);
+                            }}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold border transition-colors ${
+                              datePickingEntryIdx === realIdx
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-300'
+                            }`}
+                          >
+                            📅 Date
+                          </button>
                         </div>
                       </div>
                       <div className="mt-1 text-xs text-gray-600">Method: {String(p.method || 'unknown').toUpperCase()}</div>
@@ -3782,6 +3858,40 @@ function FeesPage() {
                       ) : null}
                       {p.receiptNo ? <div className="text-xs text-gray-600">Receipt No: {String(p.receiptNo)}</div> : null}
                       {p.editedAt ? <div className="text-xs text-orange-500 mt-0.5">📝 Edited on {p.editedAt?.toDate ? format(p.editedAt.toDate(), 'dd MMM, HH:mm') : '—'}</div> : null}
+                      
+                      {/* Inline date picker — shown only when 📅 button clicked */}
+                      {datePickingEntryIdx === realIdx && (
+                        <div className="mt-3 pt-3 border-t border-blue-200 flex flex-col gap-2">
+                          <label className="text-xs font-semibold text-blue-800">📅 Change recorded date</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="date"
+                              max={new Date().toISOString().slice(0, 10)}
+                              value={datePickingValue}
+                              onChange={(e) => setDatePickingValue(e.target.value)}
+                              className="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => onSaveDateChange(realIdx)}
+                              disabled={!datePickingValue || savingEntry}
+                              className="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition-colors"
+                            >
+                              {savingEntry ? 'Saving…' : '✓ Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setDatePickingEntryIdx(null); setDatePickingValue(''); }}
+                              className="px-3 py-2 rounded-lg text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-100"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          {datePickingValue && (
+                            <p className="text-xs text-blue-600">Will set date to {new Date(datePickingValue).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}.</p>
+                          )}
+                        </div>
+                      )}
                       <div className="text-xs mt-1">
                         {p.note
                           ? <span className="italic text-gray-700">📝 {String(p.note)}</span>
