@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getIdTokenResult, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import {
+  arrayUnion,
   collection,
   doc,
   deleteField,
@@ -60,8 +61,19 @@ import {
 
 const PAGE_SIZE = 10;
 
-const STREAM_OPTIONS = ['TECHNICAL', 'EAPCET', 'NDA', 'CEC'];
-const SUBJECT_OPTIONS = ['Physics', 'Chemistry', 'Maths A', 'Maths B', 'English', 'Sanskrit', 'Civics', 'Economics', 'Telugu'];
+const STREAM_OPTIONS = ['TECHNICAL', 'EAPCET', 'NDA', 'CEC', 'DEFENCE'];
+
+// Subjects per exam/stream for the Results (marks) page
+const STREAM_SUBJECTS = {
+  TECHNICAL: ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
+  CEC:       ['Sanskrit', 'Telugu', 'English', 'Political Science', 'Economics', 'Commerce'],
+  NDA:       ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry', 'GAT'],
+  EAPCET:    ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
+  DEFENCE:   ['Defence', 'Maths', 'General Science', 'English (Defence)', 'Arithmetic & Reasoning', 'GK'],
+};
+
+// Full union of all possible subjects (used in remarks etc.)
+const SUBJECT_OPTIONS = [...new Set(Object.values(STREAM_SUBJECTS).flat())];
 const REMARK_SUBJECT_OPTIONS = ['General', ...SUBJECT_OPTIONS, 'Other'];
 const SPEND_CATEGORIES = ['Salary', 'Maintenance', 'Utilities', 'Supplies', 'Other'];
 
@@ -519,6 +531,9 @@ function AdminShell({ user, onLogout }) {
 }
 
 function AdminLogin({ error }) {
+  const [viewMode, setViewMode] = useState(error ? 'admin_login' : 'selection'); // 'selection' | 'admin_login' | 'marks_remarks'
+  const [subTab, setSubTab] = useState('results'); // 'results' | 'remarks'
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -545,6 +560,116 @@ function AdminLogin({ error }) {
     }
   };
 
+  // 1. MARKS & REMARKS VIEW (Full setup as present in img 1)
+  if (viewMode === 'marks_remarks') {
+    return (
+      <div className="min-h-screen bg-bg flex flex-col">
+        {/* Header Navigation Bar */}
+        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setViewMode('selection')}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              <span>←</span> <span>Back to Portal Selection</span>
+            </button>
+            <div className="h-6 w-px bg-gray-200" />
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">H</div>
+              <span className="font-bold text-gray-900 text-lg">HDA Marks & Remarks</span>
+            </div>
+          </div>
+
+          {/* Sub-tab Navigation */}
+          <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl">
+            <button
+              onClick={() => setSubTab('results')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                subTab === 'results'
+                  ? 'bg-white text-primary-700 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              📋 Results
+            </button>
+            <button
+              onClick={() => setSubTab('remarks')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                subTab === 'remarks'
+                  ? 'bg-white text-primary-700 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              💬 Remarks
+            </button>
+          </div>
+        </header>
+
+        {/* Content Setup */}
+        <div className="flex-1 overflow-auto p-4 md:p-8 max-w-7xl mx-auto w-full">
+          {subTab === 'results' && <ResultsPage />}
+          {subTab === 'remarks' && <RemarksPage />}
+        </div>
+      </div>
+    );
+  }
+
+  // 2. ADMIN LOGIN FORM VIEW (Img 2 login card)
+  if (viewMode === 'admin_login') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg p-6 relative overflow-hidden">
+        {/* Decorative background elements */}
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
+          <div className="absolute -top-[10%] -right-[10%] w-[40%] h-[40%] rounded-full bg-primary-500/10 blur-[100px]"></div>
+          <div className="absolute -bottom-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-accent-500/10 blur-[100px]"></div>
+        </div>
+
+        <div className="w-full max-w-md bg-white/80 backdrop-blur-xl border border-white/40 rounded-[24px] shadow-[0_8px_32px_rgba(0,0,0,0.08)] p-8 space-y-8 z-10 relative">
+          <button
+            onClick={() => setViewMode('selection')}
+            className="absolute top-6 left-6 text-xs font-bold text-gray-500 hover:text-gray-900 flex items-center gap-1 transition-colors"
+          >
+            <span>←</span> <span>Back</span>
+          </button>
+
+          <div className="text-center space-y-3 pt-2">
+            <div className="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center text-white font-bold text-2xl shadow-glow mb-6">H</div>
+            <div className="text-2xl font-bold text-gray-900 tracking-wider">HDA PORTAL</div>
+            <div className="text-sm text-gray-500 font-medium">Secure admin access</div>
+          </div>
+
+          {displayError ? (
+            <div className="bg-red-50/80 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+              {displayError}
+            </div>
+          ) : null}
+
+          <form className="space-y-5" onSubmit={onSubmit}>
+            <div className="space-y-4">
+              <Input
+                placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="bg-white/50"
+              />
+              <Input
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="bg-white/50"
+              />
+            </div>
+            <Button type="submit" disabled={loading} className="w-full shadow-lg shadow-primary-500/25 mt-2">
+              {loading ? 'Authenticating…' : 'Sign In to HDA'}
+            </Button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. SELECTION LANDING VIEW (2 Cards: Admin & Marks & Remarks)
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg p-6 relative overflow-hidden">
       {/* Decorative background elements */}
@@ -553,39 +678,70 @@ function AdminLogin({ error }) {
         <div className="absolute -bottom-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-accent-500/10 blur-[100px]"></div>
       </div>
 
-      <div className="w-full max-w-md bg-white/80 backdrop-blur-xl border border-white/40 rounded-[24px] shadow-[0_8px_32px_rgba(0,0,0,0.08)] p-8 space-y-8 z-10">
+      <div className="w-full max-w-3xl space-y-8 z-10">
         <div className="text-center space-y-3">
-          <div className="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center text-white font-bold text-2xl shadow-glow mb-6">H</div>
-          <div className="text-2xl font-bold text-gray-900 tracking-wider">HDA PORTAL</div>
-          <div className="text-sm text-gray-500 font-medium">Secure admin access</div>
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center text-white font-bold text-3xl shadow-glow mb-4">H</div>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">HDA PORTAL</h1>
+          <p className="text-gray-500 font-medium max-w-md mx-auto">Welcome to HDA Management System. Select your access portal below to continue.</p>
         </div>
 
-        {displayError ? (
-          <div className="bg-red-50/80 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
-            {displayError}
-          </div>
-        ) : null}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Card 1: Admin */}
+          <div
+            onClick={() => setViewMode('admin_login')}
+            className="group relative bg-white/80 backdrop-blur-xl border border-white/60 hover:border-primary-400 rounded-[28px] p-8 shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:shadow-[0_16px_48px_rgba(79,70,229,0.15)] transition-all duration-300 cursor-pointer flex flex-col justify-between overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary-500/10 to-indigo-500/10 rounded-bl-full group-hover:scale-110 transition-transform duration-300 pointer-events-none" />
+            
+            <div>
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-indigo-600 flex items-center justify-center text-white text-2xl shadow-lg shadow-primary-500/30 mb-6 group-hover:scale-105 transition-transform">
+                🔑
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-primary-600 transition-colors">
+                Admin
+              </h2>
+              <p className="text-sm text-gray-500 leading-relaxed mb-6">
+                Secure login portal for administrators to manage student profiles, weekly test marks, fee history, and accounts.
+              </p>
+            </div>
 
-        <form className="space-y-5" onSubmit={onSubmit}>
-          <div className="space-y-4">
-            <Input
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="bg-white/50"
-            />
-            <Input
-              placeholder="Password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="bg-white/50"
-            />
+            <button
+              onClick={(e) => { e.stopPropagation(); setViewMode('admin_login'); }}
+              className="w-full py-3.5 px-4 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-bold text-sm shadow-md shadow-primary-500/20 group-hover:shadow-lg transition-all flex items-center justify-center gap-2"
+            >
+              <span>Sign In as Admin</span>
+              <span>→</span>
+            </button>
           </div>
-          <Button type="submit" disabled={loading} className="w-full shadow-lg shadow-primary-500/25 mt-2">
-            {loading ? 'Authenticating…' : 'Sign In to HDA'}
-          </Button>
-        </form>
+
+          {/* Card 2: Marks & Remarks */}
+          <div
+            onClick={() => setViewMode('marks_remarks')}
+            className="group relative bg-white/80 backdrop-blur-xl border border-white/60 hover:border-accent-400 rounded-[28px] p-8 shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:shadow-[0_16px_48px_rgba(245,158,11,0.15)] transition-all duration-300 cursor-pointer flex flex-col justify-between overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-accent-500/10 to-amber-500/10 rounded-bl-full group-hover:scale-110 transition-transform duration-300 pointer-events-none" />
+
+            <div>
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-500 to-amber-600 flex items-center justify-center text-white text-2xl shadow-lg shadow-accent-500/30 mb-6 group-hover:scale-105 transition-transform">
+                📊
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-accent-600 transition-colors">
+                Marks & Remarks
+              </h2>
+              <p className="text-sm text-gray-500 leading-relaxed mb-6">
+                View weekly test results, subject score cards, and performance remarks setup for all students.
+              </p>
+            </div>
+
+            <button
+              onClick={(e) => { e.stopPropagation(); setViewMode('marks_remarks')} }
+              className="w-full py-3.5 px-4 rounded-xl bg-accent-600 hover:bg-accent-700 text-white font-bold text-sm shadow-md shadow-accent-500/20 group-hover:shadow-lg transition-all flex items-center justify-center gap-2"
+            >
+              <span>View Marks & Remarks</span>
+              <span>→</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1930,65 +2086,47 @@ function ResultsPage() {
   const [studentsError, setStudentsError] = useState('');
   const [allStudents, setAllStudents] = useState([]);
 
-  // Batch Entry State
+  // Test configuration
   const [globalTestName, setGlobalTestName] = useState('');
   const [globalTestDate, setGlobalTestDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [globalSubject, setGlobalSubject] = useState(SUBJECT_OPTIONS[0]);
   const [globalMaxScore, setGlobalMaxScore] = useState('100');
+  const [subjectMaxScores, setSubjectMaxScores] = useState(() => {
+    const init = {};
+    STREAM_SUBJECTS['TECHNICAL'].forEach((s) => { init[s] = '100'; });
+    return init;
+  });
   const [globalError, setGlobalError] = useState('');
 
-  // Row Modification State
-  const [unsavedScores, setUnsavedScores] = useState({}); // { [studentId]: scoreString }
-  const [isSavingAll, setIsSavingAll] = useState(false);
+  // Subjects are driven by the Stream dropdown. 'all' defaults to TECHNICAL subjects.
+  const activeSubjects = STREAM_SUBJECTS[streamFilter] || STREAM_SUBJECTS['TECHNICAL'];
+
+  // Helper to get max score for a specific subject
+  const getSubjectMaxScore = useCallback((subject) => {
+    const val = Number(subjectMaxScores[subject]);
+    if (!isNaN(val) && val > 0) return val;
+    const fallback = Number(globalMaxScore);
+    return (!isNaN(fallback) && fallback > 0) ? fallback : 100;
+  }, [subjectMaxScores, globalMaxScore]);
 
   // Toggle for Tests Cards view
   const [showTestsView, setShowTestsView] = useState(false);
+  // Test detail view (opened by clicking a test card)
+  const [selectedTestDetail, setSelectedTestDetail] = useState(null); // aggregated test object
+  const [testDetailSubject, setTestDetailSubject] = useState(activeSubjects?.[0] || SUBJECT_OPTIONS[0]);
+  const [testDetailUnsaved, setTestDetailUnsaved] = useState({}); // { studentId: scoreStr }
+  const [testDetailSaving, setTestDetailSaving] = useState(false);
+  const [deletingTestName, setDeletingTestName] = useState(''); // name of test pending delete confirm
+
+  // Student marks modal state
+  const [marksModalStudent, setMarksModalStudent] = useState(null);
+  const [modalScores, setModalScores] = useState({});
+  const [modalSaving, setModalSaving] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [modalOk, setModalOk] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, batchFilter, yearFilter, streamFilter]);
-
-  // Clear unsaved scores if test name or subject changes
-  useEffect(() => {
-    setUnsavedScores({});
-  }, [globalTestName, globalSubject]);
-
-  useEffect(() => {
-    const term = normalizeTerm(searchTerm);
-    if (!term) return;
-    if (isProbablyAdmissionNumber(term) || isProbablyUid(term)) return;
-
-    const baseMatches = allStudents.filter((s) => studentMatchesSearch(s, term));
-    if (baseMatches.length === 0) return;
-
-    const visibleMatches = baseMatches.filter((s) => {
-      if (batchFilter !== 'all' && String(s.batch || '') !== String(batchFilter)) return false;
-      if (yearFilter !== 'all' && String(s.year || '') !== String(yearFilter)) return false;
-      if (
-        streamFilter !== 'all' &&
-        getStudentStreamValue(s).toUpperCase() !== String(streamFilter).toUpperCase()
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-    if (visibleMatches.length > 0) return;
-
-    if (baseMatches.length === 1) {
-      const only = baseMatches[0];
-      const matchBatch = String(only?.batch || 'all');
-      const matchYear = String(only?.year || 'all');
-      const matchStream = getStudentStreamValue(only);
-      if (batchFilter !== matchBatch) setBatchFilter(matchBatch);
-      if (yearFilter !== matchYear) setYearFilter(matchYear);
-      if (streamFilter !== (matchStream || 'all')) setStreamFilter(matchStream || 'all');
-    } else {
-      if (batchFilter !== 'all') setBatchFilter('all');
-      if (yearFilter !== 'all') setYearFilter('all');
-      if (streamFilter !== 'all') setStreamFilter('all');
-    }
-  }, [searchTerm, allStudents, batchFilter, yearFilter, streamFilter]);
 
   useEffect(() => {
     setStudentsLoading(true);
@@ -2014,23 +2152,18 @@ function ResultsPage() {
   const filteredStudents = useMemo(() => {
     const term = normalizeTerm(searchTerm);
     const termLower = term.toLowerCase();
+    // When DEFENCE is selected in the Stream dropdown, all students are eligible.
+    // Batch, year, and search filters still apply.
+    const isDefenceExam = streamFilter === 'DEFENCE';
 
     return allStudents.filter((s) => {
       if (batchFilter !== 'all' && String(s.batch || '') !== String(batchFilter)) return false;
       if (yearFilter !== 'all' && String(s.year || '') !== String(yearFilter)) return false;
-      if (
-        streamFilter !== 'all' &&
-        getStudentStreamValue(s).toUpperCase() !== String(streamFilter).toUpperCase()
-      ) {
-        return false;
-      }
-
+      // For Defence, skip enrolled-stream filter so all students are shown.
+      // For other streams, apply the filter as usual.
+      if (!isDefenceExam && streamFilter !== 'all' && getStudentStreamValue(s).toUpperCase() !== String(streamFilter).toUpperCase()) return false;
       if (!term) return true;
-
-      if (isProbablyAdmissionNumber(term)) {
-        return admissionMatchesTerm(s.admissionNumber, term);
-      }
-
+      if (isProbablyAdmissionNumber(term)) return admissionMatchesTerm(s.admissionNumber, term);
       const name = String(s.nameLower || s.name || '').toLowerCase();
       const admission = String(s.admissionNumber || '').toUpperCase();
       return name.includes(termLower) || admissionMatchesTerm(admission, term);
@@ -2046,20 +2179,6 @@ function ResultsPage() {
     return filteredStudents.slice(start, start + PAGE_SIZE);
   }, [filteredStudents, currentPageSafe]);
 
-  const getExistingScore = (student) => {
-    if (!globalTestName.trim()) return '';
-    const existingTest = Array.isArray(student.weeklyTests)
-      ? student.weeklyTests.find((t) => t.name.trim().toLowerCase() === globalTestName.trim().toLowerCase())
-      : null;
-    if (!existingTest) return '';
-
-    const match = Array.isArray(existingTest.subjects)
-      ? existingTest.subjects.find((s) => String(s.subject || '').toLowerCase() === globalSubject.toLowerCase())
-      : null;
-    return match && match.score !== undefined ? String(match.score) : '';
-  };
-
-  // Aggregation of unique weekly tests
   const aggregatedTests = useMemo(() => {
     const testMap = {};
     allStudents.forEach((student) => {
@@ -2068,167 +2187,72 @@ function ResultsPage() {
         if (!t.name) return;
         const key = t.name.trim();
         const keyLower = key.toLowerCase();
-        
         let dateStr = '';
         if (t.date) {
-          if (t.date.seconds) { // Firestore Timestamp
-            dateStr = format(new Date(t.date.seconds * 1000), 'yyyy-MM-dd');
-          } else if (t.date instanceof Date) {
-            dateStr = format(t.date, 'yyyy-MM-dd');
-          } else if (typeof t.date === 'string') {
-            dateStr = t.date.split('T')[0];
-          } else if (t.date.toDate && typeof t.date.toDate === 'function') {
-            dateStr = format(t.date.toDate(), 'yyyy-MM-dd');
-          } else {
-            try {
-              dateStr = format(new Date(t.date), 'yyyy-MM-dd');
-            } catch (e) {
-              dateStr = String(t.date);
-            }
-          }
+          if (t.date.seconds) { dateStr = format(new Date(t.date.seconds * 1000), 'yyyy-MM-dd'); }
+          else if (t.date instanceof Date) { dateStr = format(t.date, 'yyyy-MM-dd'); }
+          else if (typeof t.date === 'string') { dateStr = t.date.split('T')[0]; }
+          else if (t.date.toDate && typeof t.date.toDate === 'function') { dateStr = format(t.date.toDate(), 'yyyy-MM-dd'); }
+          else { try { dateStr = format(new Date(t.date), 'yyyy-MM-dd'); } catch { dateStr = String(t.date); } }
         }
-
         if (!testMap[keyLower]) {
-          testMap[keyLower] = {
-            name: key,
-            date: dateStr,
-            subjects: new Set(),
-            maxScore: 100,
-            studentCount: 0
-          };
+          testMap[keyLower] = { name: key, date: dateStr, subjects: new Set(), subjectMaxScores: {}, maxScore: 100, studentCount: 0 };
         }
-        
         testMap[keyLower].studentCount++;
         if (t.subjects && Array.isArray(t.subjects)) {
           t.subjects.forEach((s) => {
             if (s.subject) {
               testMap[keyLower].subjects.add(s.subject);
-            }
-            if (s.maxScore !== undefined) {
-              const msVal = Number(s.maxScore);
-              if (!isNaN(msVal) && msVal > 0) {
-                testMap[keyLower].maxScore = msVal;
+              if (s.maxScore !== undefined) {
+                const msVal = Number(s.maxScore);
+                if (!isNaN(msVal) && msVal > 0) {
+                  testMap[keyLower].subjectMaxScores[s.subject] = msVal;
+                  testMap[keyLower].maxScore = msVal;
+                }
               }
             }
           });
         }
       });
     });
-
-    return Object.values(testMap).map((t) => ({
-      ...t,
-      subjects: Array.from(t.subjects)
-    }));
+    return Object.values(testMap).map((t) => ({ ...t, subjects: Array.from(t.subjects) }));
   }, [allStudents]);
 
-  const saveScoreForStudent = async (studentId, scoreRaw) => {
-    const student = allStudents.find((s) => s.id === studentId);
-    if (!student) throw new Error('Student not found');
-
-    const maxScore = Number(globalMaxScore);
-    if (isNaN(maxScore) || maxScore <= 0) throw new Error('Invalid Max Score');
-
-    const existingTests = Array.isArray(student.weeklyTests) ? [...student.weeklyTests] : [];
-    const testIndex = existingTests.findIndex((t) => t.name.trim().toLowerCase() === globalTestName.trim().toLowerCase());
-
-    let testObj = testIndex >= 0 ? { ...existingTests[testIndex] } : {
-      name: globalTestName.trim(),
-      date: new Date(globalTestDate + 'T00:00:00'),
-      subjects: []
-    };
-
-    const subjects = Array.isArray(testObj.subjects) ? [...testObj.subjects] : [];
-    const subIndex = subjects.findIndex((s) => String(s.subject).toLowerCase() === globalSubject.toLowerCase());
-
-    if (scoreRaw === '') {
-      // Remove subject if empty
-      if (subIndex >= 0) subjects.splice(subIndex, 1);
-    } else {
-      const score = Number(scoreRaw);
-      if (isNaN(score) || score < 0) throw new Error('Score must be a valid number >= 0');
-      if (score > maxScore) throw new Error('Score cannot exceed Max Score');
-
-      if (subIndex >= 0) {
-        subjects[subIndex] = { ...subjects[subIndex], score, maxScore };
-      } else {
-        subjects.push({ subject: globalSubject, score, maxScore });
-      }
-    }
-
-    testObj.subjects = subjects;
-
-    if (testIndex >= 0) {
-      existingTests[testIndex] = testObj;
-    } else {
-      existingTests.push(testObj);
-    }
-
-    await setDoc(doc(db, 'students', studentId), { weeklyTests: existingTests }, { merge: true });
-  };
-
-  const handleSaveRow = async (studentId) => {
-    if (!globalTestName.trim()) {
-      setGlobalError('Please enter a Weekly Test Name (e.g. "Weekly Test 1").');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const val = unsavedScores[studentId];
-    if (val === undefined) return; // Nothing changed
-
-    setGlobalError('');
-
-    try {
-      await saveScoreForStudent(studentId, val);
-      setUnsavedScores((prev) => {
-        const next = { ...prev };
-        delete next[studentId];
-        return next;
-      });
-    } catch (err) {
-      alert(`Error saving for student ID ${studentId}: ${err.message}`);
-    }
-  };
-
-  const handleSaveAll = async () => {
-    if (!globalTestName.trim()) {
-      setGlobalError('Please enter a Weekly Test Name.');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const studentIds = Object.keys(unsavedScores);
-    if (studentIds.length === 0) {
-      alert("No changes to save. All marks are up to date.");
-      return;
-    }
-
-    setGlobalError('');
-    setIsSavingAll(true);
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const studentId of studentIds) {
-      const val = unsavedScores[studentId];
-      try {
-        await saveScoreForStudent(studentId, val);
-        successCount++;
-        setUnsavedScores((prev) => {
-          const next = { ...prev };
-          delete next[studentId];
-          return next;
+  // Sync subject max scores when globalTestName matches an existing test
+  useEffect(() => {
+    if (!globalTestName.trim()) return;
+    const match = aggregatedTests.find((t) => t.name.trim().toLowerCase() === globalTestName.trim().toLowerCase());
+    if (match && match.subjectMaxScores && Object.keys(match.subjectMaxScores).length > 0) {
+      setSubjectMaxScores((prev) => {
+        const updated = { ...prev };
+        Object.entries(match.subjectMaxScores).forEach(([sub, val]) => {
+          if (val !== undefined && val !== null) updated[sub] = String(val);
         });
-      } catch (err) {
-        errorCount++;
-      }
+        return updated;
+      });
     }
+  }, [globalTestName, aggregatedTests]);
 
-    setIsSavingAll(false);
-    if (errorCount === 0) {
-      alert(`Successfully saved marks for ${successCount} students.`);
-    } else {
-      alert(`Saved ${successCount} students. Failed for ${errorCount} students (check validity of their scores).`);
-    }
+  // Reset subject max scores when the Stream dropdown changes
+  useEffect(() => {
+    const subjects = STREAM_SUBJECTS[streamFilter] || STREAM_SUBJECTS['TECHNICAL'];
+    const init = {};
+    subjects.forEach((s) => { init[s] = '100'; });
+    setSubjectMaxScores(init);
+    setTestDetailSubject(subjects[0]);
+  }, [streamFilter]);
+
+  const getExistingScoresForStudent = (student) => {
+    if (!globalTestName.trim()) return {};
+    const existingTest = Array.isArray(student.weeklyTests)
+      ? student.weeklyTests.find((t) => t.name.trim().toLowerCase() === globalTestName.trim().toLowerCase())
+      : null;
+    if (!existingTest || !Array.isArray(existingTest.subjects)) return {};
+    const result = {};
+    existingTest.subjects.forEach((s) => {
+      if (s.subject) result[s.subject] = String(s.score !== undefined ? s.score : '');
+    });
+    return result;
   };
 
   const handleCreateNewTest = () => {
@@ -2237,31 +2261,177 @@ function ResultsPage() {
       const name = t.name.toLowerCase();
       if (name.includes('weekly test')) {
         const match = name.match(/weekly test\s*(\d+)/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxNum) {
-            maxNum = num;
-          }
-        }
+        if (match) { const num = parseInt(match[1], 10); if (num > maxNum) maxNum = num; }
       }
     });
     const nextNum = maxNum > 0 ? maxNum + 1 : aggregatedTests.length + 1;
-    const nextTestName = `weekly test ${nextNum}`;
-
-    setGlobalTestName(nextTestName);
+    // Use today's date (same dates are allowed across multiple tests)
+    setGlobalTestName(`weekly test ${nextNum}`);
     setGlobalTestDate(format(new Date(), 'yyyy-MM-dd'));
     setGlobalMaxScore('100');
+    const init = {};
+    activeSubjects.forEach((s) => { init[s] = '100'; });
+    setSubjectMaxScores(init);
     setGlobalError('');
-    setUnsavedScores({});
     setShowTestsView(false);
+  };
+
+  const openMarksModal = (student) => {
+    setGlobalError('');
+    const existing = getExistingScoresForStudent(student);
+    setModalScores(existing);
+    setModalError('');
+    setModalOk(false);
+    setMarksModalStudent(student);
+  };
+
+  const closeMarksModal = () => {
+    setMarksModalStudent(null);
+    setModalScores({});
+    setModalError('');
+    setModalOk(false);
+  };
+
+  const handleSaveModalMarks = async () => {
+    if (!marksModalStudent) return;
+    if (!globalTestName.trim()) {
+      setModalError('Please enter a Test Name above before saving marks.');
+      return;
+    }
+    // (Date conflicts are allowed — multiple tests can share the same date)
+    for (const [subject, scoreRaw] of Object.entries(modalScores)) {
+      if (scoreRaw === '' || scoreRaw === undefined) continue;
+      const score = Number(scoreRaw);
+      const maxS = getSubjectMaxScore(subject);
+      if (isNaN(score) || score < 0) { setModalError(`Invalid score for ${subject}.`); return; }
+      if (score > maxS) { setModalError(`Score for ${subject} (${score}) exceeds Max Score (${maxS}).`); return; }
+    }
+    setModalSaving(true);
+    setModalError('');
+    try {
+      const student = marksModalStudent;
+      const existingTests = Array.isArray(student.weeklyTests) ? [...student.weeklyTests] : [];
+      const testIndex = existingTests.findIndex(
+        (t) => t.name.trim().toLowerCase() === globalTestName.trim().toLowerCase()
+      );
+      let testObj = testIndex >= 0 ? { ...existingTests[testIndex] } : {
+        name: globalTestName.trim(),
+        date: new Date(globalTestDate + 'T00:00:00'),
+        subjects: [],
+      };
+      const subjects = Array.isArray(testObj.subjects) ? [...testObj.subjects] : [];
+      for (const subject of activeSubjects) {
+        const scoreRaw = modalScores[subject];
+        const subIndex = subjects.findIndex((s) => String(s.subject).toLowerCase() === subject.toLowerCase());
+        const maxScore = getSubjectMaxScore(subject);
+        if (scoreRaw === '' || scoreRaw === undefined) {
+          if (subIndex >= 0) subjects.splice(subIndex, 1);
+        } else {
+          const score = Number(scoreRaw);
+          if (subIndex >= 0) { subjects[subIndex] = { ...subjects[subIndex], subject, score, maxScore }; }
+          else { subjects.push({ subject, score, maxScore }); }
+        }
+      }
+      testObj.subjects = subjects;
+      if (testIndex >= 0) { existingTests[testIndex] = testObj; } else { existingTests.push(testObj); }
+      await setDoc(doc(db, 'students', student.id), { weeklyTests: existingTests }, { merge: true });
+      setAllStudents((prev) => prev.map((s) => s.id === student.id ? { ...s, weeklyTests: existingTests } : s));
+      setModalOk(true);
+      setTimeout(() => { setModalOk(false); closeMarksModal(); }, 1500);
+    } catch (err) {
+      setModalError(err.message || 'Failed to save marks.');
+    } finally {
+      setModalSaving(false);
+    }
+  };
+
+  const getSubjectCount = (student) => {
+    const existing = getExistingScoresForStudent(student);
+    return Object.values(existing).filter((v) => v !== '').length;
+  };
+
+  // Get score for a student in the detail view test + subject
+  const getDetailScore = (student, testName, subject) => {
+    const tests = Array.isArray(student.weeklyTests) ? student.weeklyTests : [];
+    const t = tests.find((x) => x.name.trim().toLowerCase() === testName.trim().toLowerCase());
+    if (!t || !Array.isArray(t.subjects)) return '';
+    const s = t.subjects.find((x) => String(x.subject).toLowerCase() === subject.toLowerCase());
+    return s && s.score !== undefined ? String(s.score) : '';
+  };
+
+  // Save a single student score in the detail view
+  const handleSaveDetailRow = async (studentId) => {
+    if (!selectedTestDetail) return;
+    const val = testDetailUnsaved[studentId];
+    if (val === undefined) return;
+    const student = allStudents.find((s) => s.id === studentId);
+    if (!student) return;
+    setTestDetailSaving(true);
+    try {
+      const subjectMax = (selectedTestDetail?.subjectMaxScores?.[testDetailSubject])
+        ? Number(selectedTestDetail.subjectMaxScores[testDetailSubject])
+        : Number(selectedTestDetail?.maxScore || 100);
+      const existingTests = Array.isArray(student.weeklyTests) ? [...student.weeklyTests] : [];
+      const testIndex = existingTests.findIndex((t) => t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase());
+      let testObj = testIndex >= 0 ? { ...existingTests[testIndex] } : {
+        name: selectedTestDetail.name.trim(),
+        date: selectedTestDetail.date ? new Date(selectedTestDetail.date + 'T00:00:00') : new Date(),
+        subjects: [],
+      };
+      const subjects = Array.isArray(testObj.subjects) ? [...testObj.subjects] : [];
+      const subIdx = subjects.findIndex((s) => String(s.subject).toLowerCase() === testDetailSubject.toLowerCase());
+      if (val === '') {
+        if (subIdx >= 0) subjects.splice(subIdx, 1);
+      } else {
+        const score = Number(val);
+        if (!isNaN(score) && score >= 0 && score <= subjectMax) {
+          if (subIdx >= 0) { subjects[subIdx] = { ...subjects[subIdx], subject: testDetailSubject, score, maxScore: subjectMax }; }
+          else { subjects.push({ subject: testDetailSubject, score, maxScore: subjectMax }); }
+        }
+      }
+      testObj.subjects = subjects;
+      if (testIndex >= 0) { existingTests[testIndex] = testObj; } else { existingTests.push(testObj); }
+      await setDoc(doc(db, 'students', studentId), { weeklyTests: existingTests }, { merge: true });
+      setAllStudents((prev) => prev.map((s) => s.id === studentId ? { ...s, weeklyTests: existingTests } : s));
+      setTestDetailUnsaved((prev) => { const n = { ...prev }; delete n[studentId]; return n; });
+    } catch (err) {
+      alert('Error saving: ' + err.message);
+    } finally {
+      setTestDetailSaving(false);
+    }
+  };
+
+  // Save all unsaved detail rows
+  const handleSaveAllDetail = async () => {
+    for (const sid of Object.keys(testDetailUnsaved)) {
+      await handleSaveDetailRow(sid);
+    }
+  };
+
+  // Delete an entire test (remove from all students)
+  const handleDeleteTest = async (testName) => {
+    try {
+      const updates = allStudents
+        .filter((s) => Array.isArray(s.weeklyTests) && s.weeklyTests.some((t) => t.name.trim().toLowerCase() === testName.trim().toLowerCase()))
+        .map(async (s) => {
+          const newTests = s.weeklyTests.filter((t) => t.name.trim().toLowerCase() !== testName.trim().toLowerCase());
+          await setDoc(doc(db, 'students', s.id), { weeklyTests: newTests }, { merge: true });
+          setAllStudents((prev) => prev.map((x) => x.id === s.id ? { ...x, weeklyTests: newTests } : x));
+        });
+      await Promise.all(updates);
+      if (selectedTestDetail?.name?.trim().toLowerCase() === testName.trim().toLowerCase()) setSelectedTestDetail(null);
+      if (globalTestName.trim().toLowerCase() === testName.trim().toLowerCase()) setGlobalTestName('');
+      setDeletingTestName('');
+    } catch (err) {
+      alert('Error deleting test: ' + err.message);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Weekly Test Configuration Area */}
       <Card
         title="Weekly Test Configuration"
-        subtitle="Set the active test and subject to begin batch entering marks."
+        subtitle="Set active test & test date, customize per-subject max marks (subjects update based on the Stream filter below), then click any student to enter marks."
         className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 shadow-md"
       >
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
@@ -2269,26 +2439,28 @@ function ResultsPage() {
             label="Weekly Test Name"
             placeholder="e.g. weekly test 1"
             value={globalTestName}
-            onChange={(e) => {
-               setGlobalTestName(e.target.value);
-               setGlobalError('');
-            }}
-            className="border-blue-200 focus:border-blue-500 focus:ring-blue-500 bg-white"
+            onChange={(e) => { setGlobalTestName(e.target.value); setGlobalError(''); }}
+            className="border-blue-200 focus:border-blue-500 focus:ring-blue-500 bg-white font-semibold text-gray-900"
           />
-          <Select
-            label="Subject"
-            value={globalSubject}
-            onChange={(e) => setGlobalSubject(e.target.value)}
-            options={SUBJECT_OPTIONS.map((sub) => ({ value: sub, label: sub }))}
+          <Input
+            label="Test Date"
+            type="date"
+            value={globalTestDate}
+            onChange={(e) => setGlobalTestDate(e.target.value)}
             className="border-blue-200 focus:border-blue-500 focus:ring-blue-500 bg-white"
           />
           <Input
-            label="Max Score"
+            label="Default Max Score (for all)"
             type="number"
             value={globalMaxScore}
-            onChange={(e) => setGlobalMaxScore(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setGlobalMaxScore(val);
+            }}
             className="border-blue-200 focus:border-blue-500 focus:ring-blue-500 bg-white"
           />
+          {/* No date conflict restriction — multiple tests can share the same date */}
+
           <div className="w-full">
             <Button
               onClick={handleCreateNewTest}
@@ -2298,146 +2470,325 @@ function ResultsPage() {
             </Button>
           </div>
         </div>
+
+        {/* Per-Subject Max Marks Area */}
+        <div className="mt-5 pt-4 border-t border-indigo-200/70">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h4 className="text-xs font-extrabold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🎯</span> <span>Subject Max Marks Area</span>
+              </h4>
+              <p className="text-[11px] text-indigo-700/80 font-medium">Set max obtainable marks for each individual subject for "{globalTestName || 'Active Test'}"</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const val = globalMaxScore || '100';
+                  const updated = {};
+                  activeSubjects.forEach((s) => { updated[s] = val; });
+                  setSubjectMaxScores(updated);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 transition-all shadow-xs flex items-center gap-1"
+                title="Apply Default Max Score to all subjects"
+              >
+                <span>⚡</span> <span>Apply Default ({globalMaxScore || 100}) to All</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+            {activeSubjects.map((subject) => {
+              const currentMax = subjectMaxScores[subject] ?? globalMaxScore ?? '100';
+              return (
+                <div key={subject} className="bg-white p-2.5 rounded-xl border border-indigo-200/80 shadow-xs hover:border-indigo-400 hover:shadow-sm transition-all">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1 truncate" title={subject}>
+                    {subject}
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={currentMax}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSubjectMaxScores((prev) => ({ ...prev, [subject]: val }));
+                      }}
+                      className="w-full text-center py-1.5 px-1 text-sm font-bold text-indigo-900 bg-indigo-50/50 border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all"
+                      placeholder="100"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {globalError && <p className="text-red-600 text-sm font-medium mt-3 bg-red-50 p-2 rounded border border-red-200">{globalError}</p>}
       </Card>
 
       <Card
-        title={showTestsView ? "Available Weekly Tests" : "Students Results List"}
-        subtitle={showTestsView ? "Select a test card to load and edit its marks." : `Enter marks for ${globalSubject} across all filtered students.`}
+        title={showTestsView ? 'Available Weekly Tests' : 'Students — Click to Enter Marks'}
+        subtitle={showTestsView ? 'Select a test to load its marks.' : globalTestName.trim() ? `Active: "${globalTestName}" — Click a student row to enter all subject marks at once.` : 'Set a test name above, then click any student to enter marks.'}
         className="border-blue-150 shadow-md bg-gradient-to-br from-white to-indigo-50/10"
         action={
-          <div className="flex gap-2">
-            <Button 
-              onClick={() => setShowTestsView(!showTestsView)}
-              className={`shadow-sm font-bold transition-all duration-200 flex items-center gap-2 border-2 ${
-                showTestsView 
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600 shadow-md' 
-                  : 'bg-white text-blue-600 hover:bg-blue-50 border-blue-600'
-              }`}
-            >
-              <span>📋</span> <span>Tests</span>
-            </Button>
-            <Button 
-              onClick={handleSaveAll} 
-              disabled={isSavingAll}
-              className="shadow-sm border border-blue-600 hover:bg-blue-700 bg-blue-600 hover:border-blue-700 text-white font-semibold transition-all duration-200"
-            >
-              {isSavingAll ? 'Saving All...' : `💾 Save All Changes (${Object.keys(unsavedScores).length})`}
-            </Button>
-          </div>
+          <Button
+            onClick={() => setShowTestsView(!showTestsView)}
+            className="shadow-sm font-bold transition-all duration-200 flex items-center gap-2 border-2 bg-blue-600 text-white hover:bg-blue-700 border-blue-600 shadow-md"
+          >
+            <span>📋</span> <span>Tests</span>
+          </Button>
         }
       >
         {showTestsView ? (
           <div className="mt-2">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {aggregatedTests.map((t) => (
-                <div 
-                  key={t.name}
-                  onClick={() => {
-                    setGlobalTestName(t.name);
-                    if (t.date) setGlobalTestDate(t.date);
-                    if (t.maxScore) setGlobalMaxScore(String(t.maxScore));
-                    if (t.subjects && t.subjects.length > 0) {
-                      if (!t.subjects.includes(globalSubject)) {
-                        setGlobalSubject(t.subjects[0]);
-                      }
-                    }
-                    setShowTestsView(false);
-                  }}
-                  className="group relative bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all duration-300 cursor-pointer overflow-hidden flex flex-col justify-between min-h-[140px]"
-                >
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-bl-full group-hover:scale-110 transition-transform duration-300 pointer-events-none" />
-                  
-                  <div>
-                    <div className="flex justify-between items-start mb-3">
-                      <h4 className="text-lg font-bold text-gray-900 group-hover:text-indigo-600 transition-colors duration-200">
-                        {t.name}
-                      </h4>
-                      <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100 shadow-sm">
-                        {t.studentCount} student{t.studentCount !== 1 ? 's' : ''}
-                      </span>
+
+            {/* Test Detail Panel — shown when a card is clicked */}
+            {selectedTestDetail ? (
+              <div className="border-2 border-indigo-300 rounded-xl overflow-hidden shadow-md">
+                {/* Detail Header */}
+                <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-5 py-4 flex items-center justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-white font-bold text-base">{selectedTestDetail.name}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-indigo-200 text-xs">📅</span>
+                      <input
+                        type="date"
+                        defaultValue={selectedTestDetail.date || ''}
+                        onChange={async (e) => {
+                          const newDate = e.target.value;
+                          if (!newDate) return;
+                          // Update date on all students who have this test
+                          try {
+                            const updates = allStudents
+                              .filter((s) => Array.isArray(s.weeklyTests) && s.weeklyTests.some((t) => t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()))
+                              .map(async (s) => {
+                                const newTests = s.weeklyTests.map((t) =>
+                                  t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()
+                                    ? { ...t, date: new Date(newDate + 'T00:00:00') }
+                                    : t
+                                );
+                                await setDoc(doc(db, 'students', s.id), { weeklyTests: newTests }, { merge: true });
+                                setAllStudents((prev) => prev.map((x) => x.id === s.id ? { ...x, weeklyTests: newTests } : x));
+                              });
+                            await Promise.all(updates);
+                            setSelectedTestDetail((prev) => ({ ...prev, date: newDate }));
+                          } catch (err) {
+                            alert('Error updating date: ' + err.message);
+                          }
+                        }}
+                        className="bg-white/20 text-white text-xs font-semibold border border-white/30 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
+                        title="Edit exam date"
+                      />
+                      <span className="text-indigo-200 text-xs">• Max ({testDetailSubject}): {
+                        (selectedTestDetail?.subjectMaxScores?.[testDetailSubject])
+                          ? selectedTestDetail.subjectMaxScores[testDetailSubject]
+                          : (selectedTestDetail?.maxScore || 100)
+                      }</span>
                     </div>
+                  </div>
+                  <button onClick={() => { setSelectedTestDetail(null); setTestDetailUnsaved({}); }} className="text-white/70 hover:text-white text-2xl font-bold transition-colors leading-none ml-4">×</button>
+                </div>
 
-                    <p className="text-xs text-gray-500 mb-4 font-medium flex items-center gap-1">
-                      <span>📅 Date:</span> <span>{t.date || 'No Date'}</span>
-                    </p>
+                {/* Subject selector pills */}
+                <div className="bg-indigo-50 px-5 py-3 border-b border-indigo-200 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-indigo-800 uppercase tracking-wider">Subject:</span>
+                  {activeSubjects.map((sub) => (
+                    <button
+                      key={sub}
+                      onClick={() => { setTestDetailSubject(sub); setTestDetailUnsaved({}); }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                        testDetailSubject === sub
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                          : 'bg-white text-indigo-700 border-indigo-300 hover:bg-indigo-100'
+                      }`}
+                    >
+                      {sub}
+                    </button>
+                  ))}
+                  {Object.keys(testDetailUnsaved).length > 0 && (
+                    <button
+                      onClick={handleSaveAllDetail}
+                      disabled={testDetailSaving}
+                      className="ml-auto px-4 py-1.5 rounded-full text-xs font-bold bg-green-600 hover:bg-green-700 text-white transition-colors disabled:opacity-50"
+                    >
+                      {testDetailSaving ? 'Saving…' : `💾 Save All (${Object.keys(testDetailUnsaved).length})`}
+                    </button>
+                  )}
+                </div>
 
-                    <div className="mb-4">
-                      <span className="text-[10px] text-gray-400 block mb-1.5 uppercase tracking-wider font-bold">Subjects</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {t.subjects && t.subjects.length > 0 ? (
-                          t.subjects.map((sub) => (
-                            <span 
-                              key={sub}
-                              className={`text-xs px-2 py-0.5 rounded-md font-medium border transition-colors ${
-                                sub === globalSubject 
-                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
-                                  : 'bg-gray-50 text-gray-600 border-gray-200'
-                              }`}
-                            >
-                              {sub}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-gray-400 italic">No subjects</span>
-                        )}
+                {/* Search & Filter bar */}
+                <div className="px-5 py-4 border-b border-gray-200 bg-white grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <Input
+                    label="Search"
+                    placeholder="Name / admission"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="border-gray-200 focus:border-indigo-400 focus:ring-indigo-200"
+                  />
+                  <Select
+                    label="Batch"
+                    value={batchFilter}
+                    onChange={(e) => setBatchFilter(e.target.value)}
+                    options={[{ value: 'all', label: 'All Batches' }, ...BATCH_OPTIONS.map((b) => ({ value: b, label: b }))]}
+                    className="border-gray-200 focus:border-indigo-400"
+                  />
+                  <Select
+                    label="Year"
+                    value={yearFilter}
+                    onChange={(e) => setYearFilter(e.target.value)}
+                    options={[{ value: '1', label: '1st Year' }, { value: '2', label: '2nd Year' }, { value: 'all', label: 'All Years' }]}
+                    className="border-gray-200 focus:border-indigo-400"
+                  />
+                  <Select
+                    label="Stream"
+                    value={streamFilter}
+                    onChange={(e) => setStreamFilter(e.target.value)}
+                    options={[{ value: 'all', label: 'All Streams' }, ...STREAM_OPTIONS.map((s) => ({ value: s, label: s }))]}
+                    className="border-gray-200 focus:border-indigo-400"
+                  />
+                </div>
+
+                {/* Student score table — filtered */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="text-left px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Admission No</th>
+                        <th className="text-left px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Student Name</th>
+                        <th className="text-left px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Year & Stream</th>
+                        <th className="text-center px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">{testDetailSubject} Score</th>
+                        <th className="px-5 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredStudents.length === 0 ? (
+                        <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-gray-400">No students match the filters.</td></tr>
+                      ) : filteredStudents.map((student, idx) => {
+                        const isUnsaved = testDetailUnsaved[student.id] !== undefined;
+                        const val = isUnsaved ? testDetailUnsaved[student.id] : getDetailScore(student, selectedTestDetail.name, testDetailSubject);
+                        const currentDetailMax = (selectedTestDetail?.subjectMaxScores?.[testDetailSubject])
+                          ? Number(selectedTestDetail.subjectMaxScores[testDetailSubject])
+                          : Number(selectedTestDetail?.maxScore || 100);
+                        return (
+                          <tr key={student.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
+                            <td className="px-5 py-3 font-mono text-xs font-semibold text-gray-700">{student.admissionNumber || '—'}</td>
+                            <td className="px-5 py-3 font-semibold text-gray-900">{student.name || '—'}</td>
+                            <td className="px-5 py-3 text-gray-600 text-xs">{student.year || '1'} Yr • {getStudentStreamValue(student) || '—'}</td>
+                            <td className="px-5 py-3">
+                              <div className="flex items-center justify-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={currentDetailMax}
+                                  placeholder="Score"
+                                  value={val}
+                                  onChange={(e) => setTestDetailUnsaved((prev) => ({ ...prev, [student.id]: e.target.value }))}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDetailRow(student.id); }}
+                                  className={`w-24 px-3 py-2 text-center text-base font-semibold border-2 rounded-lg focus:outline-none focus:ring-2 transition-all ${
+                                    isUnsaved ? 'bg-amber-50 border-amber-400 text-amber-900 focus:ring-amber-200' : 'bg-blue-50/30 border-blue-200 text-blue-900 hover:border-blue-300 focus:ring-blue-100'
+                                  }`}
+                                />
+                                <span className="text-gray-400 text-xs">/ {currentDetailMax}</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-3">
+                              {isUnsaved && (
+                                <button
+                                  onClick={() => handleSaveDetailRow(student.id)}
+                                  disabled={testDetailSaving}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
+                                >
+                                  💾 Save
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              /* Test cards grid */
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {aggregatedTests.map((t) => (
+                  <div
+                    key={t.name}
+                    className="group relative bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all duration-300 overflow-hidden flex flex-col justify-between min-h-[140px]"
+                  >
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-bl-full group-hover:scale-110 transition-transform duration-300 pointer-events-none" />
+                    <div>
+                      <div className="flex justify-between items-start mb-3">
+                        <h4
+                          onClick={() => { setSelectedTestDetail(t); setTestDetailSubject(t.subjects?.[0] || activeSubjects[0]); setTestDetailUnsaved({}); }}
+                          className="text-lg font-bold text-gray-900 group-hover:text-indigo-600 transition-colors duration-200 cursor-pointer flex-1 pr-2"
+                        >
+                          {t.name}
+                        </h4>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100 shadow-sm">{t.studentCount} student{t.studentCount !== 1 ? 's' : ''}</span>
+                          {/* Delete button */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeletingTestName(t.name); }}
+                            className="p-1.5 rounded-lg text-xs font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors"
+                            title="Delete this test"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-4 font-medium flex items-center gap-1"><span>📅</span> <span>{t.date || 'No Date'}</span></p>
+                      <div className="mb-4">
+                        <span className="text-[10px] text-gray-400 block mb-1.5 uppercase tracking-wider font-bold">Subjects</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {t.subjects && t.subjects.length > 0 ? t.subjects.map((sub) => (
+                            <span key={sub} className="text-xs px-2 py-0.5 rounded-md font-medium border bg-gray-50 text-gray-600 border-gray-200">{sub}</span>
+                          )) : <span className="text-xs text-gray-400 italic">No subjects</span>}
+                        </div>
                       </div>
                     </div>
+                    <div
+                      onClick={() => { setSelectedTestDetail(t); setTestDetailSubject(t.subjects?.[0] || activeSubjects[0]); setTestDetailUnsaved({}); }}
+                      className="pt-3 border-t border-gray-100 flex justify-between items-center mt-auto cursor-pointer"
+                    >
+                      <span className="text-xs text-gray-500 font-medium">
+                        Max: <strong className="text-gray-700">
+                          {(() => {
+                            if (t.subjectMaxScores && Object.keys(t.subjectMaxScores).length > 0) {
+                              const vals = Object.values(t.subjectMaxScores).map(Number).filter((v) => !isNaN(v) && v > 0);
+                              if (vals.length > 0) {
+                                const min = Math.min(...vals);
+                                const max = Math.max(...vals);
+                                return min === max ? `${min}` : `${min}–${max}`;
+                              }
+                            }
+                            return `${t.maxScore || 100}`;
+                          })()}
+                        </strong>
+                      </span>
+                      <button className="text-xs font-bold text-indigo-600 group-hover:text-indigo-800 flex items-center gap-1 transition-colors">✏️ View & Edit →</button>
+                    </div>
                   </div>
-
-                  <div className="pt-3 border-t border-gray-100 flex justify-between items-center mt-auto">
-                    <span className="text-xs text-gray-500 font-medium">
-                      Max Score: <strong className="text-gray-700">{t.maxScore}</strong>
-                    </span>
-                    <button className="text-xs font-bold text-indigo-600 group-hover:text-indigo-800 flex items-center gap-1 transition-colors">
-                      ✏️ Edit Marks &rarr;
-                    </button>
+                ))}
+                {aggregatedTests.length === 0 && (
+                  <div className="col-span-full text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                    <p className="text-gray-500 font-medium">No tests found yet.</p>
+                    <p className="text-xs text-gray-400 mt-1">Enter a test name above and click a student to start.</p>
                   </div>
-                </div>
-              ))}
-              {aggregatedTests.length === 0 && (
-                <div className="col-span-full text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                  <p className="text-gray-500 font-medium">No tests found in database.</p>
-                  <p className="text-xs text-gray-400 mt-1">Start by adding a test name and entering marks in the form above.</p>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <Input
-                label="Search"
-                className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500"
-                placeholder="Name / admission"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-              <Select
-                className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500"
-                label="Batch"
-                value={batchFilter}
-                onChange={(e) => setBatchFilter(e.target.value)}
-                options={[{ value: 'all', label: 'All Batches' }, ...BATCH_OPTIONS.map((b) => ({ value: b, label: b }))]}
-              />
-              <Select
-                className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500"
-                label="Year"
-                value={yearFilter}
-                onChange={(e) => setYearFilter(e.target.value)}
-                options={[
-                  { value: '1', label: '1st Year' },
-                  { value: '2', label: '2nd Year' },
-                  { value: 'all', label: 'All Years' },
-                ]}
-              />
-              <Select
-                className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500"
-                label="Stream"
-                value={streamFilter}
-                onChange={(e) => setStreamFilter(e.target.value)}
-                options={[{ value: 'all', label: 'All Streams' }, ...STREAM_OPTIONS.map((s) => ({ value: s, label: s }))]}
-              />
+              <Input label="Search" className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500" placeholder="Name / admission" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Select className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500" label="Batch" value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)} options={[{ value: 'all', label: 'All Batches' }, ...BATCH_OPTIONS.map((b) => ({ value: b, label: b }))]} />
+              <Select className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500" label="Year" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} options={[{ value: '1', label: '1st Year' }, { value: '2', label: '2nd Year' }, { value: 'all', label: 'All Years' }]} />
+              <Select className="border-2 border-primary-200 focus:ring-primary-500 focus:border-primary-500" label="Stream" value={streamFilter} onChange={(e) => setStreamFilter(e.target.value)} options={[{ value: 'all', label: 'All Streams' }, ...STREAM_OPTIONS.map((s) => ({ value: s, label: s }))]} />
             </div>
 
             {studentsError ? <div className="mt-4"><Alert type="error" title="Error" message={studentsError} /></div> : null}
@@ -2450,55 +2801,189 @@ function ResultsPage() {
 
               {students.length > 0 && (
                 <>
-                  <Table
-                    columns={[
-                      { key: 'admissionNumber', label: 'Admission No' },
-                      { key: 'name', label: 'Student Name' },
-                      { key: 'yearStream', label: 'Year & Stream', render: (_, row) => `${row.year || '1st'} Yr • ${getStudentStreamValue(row) || '—'}` },
-                      { 
-                        key: 'scoreInput', 
-                        label: `${globalSubject} Score`, 
-                        render: (_, row) => {
-                          const isUnsaved = unsavedScores[row.id] !== undefined;
-                          const val = isUnsaved ? unsavedScores[row.id] : getExistingScore(row);
+                  <div className="overflow-hidden rounded-xl border border-gray-200 shadow-sm">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-200">
+                          <th className="text-left px-5 py-3.5 text-xs font-bold text-gray-600 uppercase tracking-wider">Admission No</th>
+                          <th className="text-left px-5 py-3.5 text-xs font-bold text-gray-600 uppercase tracking-wider">Student Name</th>
+                          <th className="text-left px-5 py-3.5 text-xs font-bold text-gray-600 uppercase tracking-wider">Year & Stream</th>
+                          <th className="text-left px-5 py-3.5 text-xs font-bold text-gray-600 uppercase tracking-wider">Subjects Entered</th>
+                          <th className="px-5 py-3.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {students.map((student, idx) => {
+                          const count = getSubjectCount(student);
+                          const hasMarks = count > 0;
                           return (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                placeholder="Score"
-                                className={`w-28 px-3 py-2 text-center text-base font-semibold border-2 rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:border-blue-500 focus:ring-blue-100 ${
-                                  isUnsaved 
-                                    ? 'bg-amber-50 border-amber-400 text-amber-900' 
-                                    : 'bg-blue-50/20 border-blue-200 text-blue-900 hover:border-blue-300'
-                                }`}
-                                value={val}
-                                onChange={(e) => setUnsavedScores(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    handleSaveRow(row.id);
-                                  }
-                                }}
-                              />
-                              <span className="text-gray-400 text-sm">/ {globalMaxScore}</span>
-                            </div>
+                            <tr
+                              key={student.id}
+                              onClick={() => openMarksModal(student)}
+                              className={`cursor-pointer transition-all duration-150 hover:bg-indigo-50/70 hover:shadow-sm ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}`}
+                            >
+                              <td className="px-5 py-4 font-mono text-xs font-semibold text-gray-700">{student.admissionNumber || '—'}</td>
+                              <td className="px-5 py-4 font-semibold text-gray-900">{student.name || '—'}</td>
+                              <td className="px-5 py-4 text-gray-600">{student.year || '1'} Yr • {getStudentStreamValue(student) || '—'}</td>
+                              <td className="px-5 py-4">
+                                {globalTestName.trim() ? (
+                                  hasMarks ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-200">✓ {count}/{activeSubjects.length} subjects</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">No marks yet</span>
+                                  )
+                                ) : (
+                                  <span className="text-xs text-gray-400 italic">Set test name first</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-4 text-right">
+                                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm">✏️ Enter Marks</span>
+                              </td>
+                            </tr>
                           );
-                        } 
-                      }
-                    ]}
-                    data={students}
-                  />
-
-                  <Pagination
-                    currentPage={currentPageSafe}
-                    totalPages={totalPages}
-                    onPageChange={setCurrentPage}
-                  />
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination currentPage={currentPageSafe} totalPages={totalPages} onPageChange={setCurrentPage} />
                 </>
               )}
             </div>
           </>
         )}
       </Card>
+
+      {/* Delete Test Confirmation Modal */}
+      {deletingTestName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-gradient-to-r from-red-600 to-red-500 px-6 py-5 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white text-xl flex-shrink-0">🗑️</div>
+              <div>
+                <h3 className="text-white font-bold text-base">Delete Test?</h3>
+                <p className="text-red-100 text-xs mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-gray-700 text-sm leading-relaxed">
+                Are you sure you want to delete <strong className="text-gray-900 italic">"{deletingTestName}"</strong>?
+              </p>
+              <p className="text-red-600 text-xs mt-2 font-medium">⚠️ This will remove the test and all its marks from ALL students permanently.</p>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex gap-3 justify-end">
+              <button
+                onClick={() => setDeletingTestName('')}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold border-2 border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteTest(deletingTestName)}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white transition-colors shadow-sm shadow-red-200"
+              >
+                🗑️ Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Marks Entry Modal */}
+      {marksModalStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-indigo-600 to-blue-600">
+              <div>
+                <h2 className="text-lg font-bold text-white">{marksModalStudent.name}</h2>
+                <p className="text-indigo-200 text-sm">{marksModalStudent.admissionNumber} • {marksModalStudent.year} Yr • {getStudentStreamValue(marksModalStudent)}</p>
+              </div>
+              <div className="text-right mr-4">
+                <p className="text-indigo-200 text-xs font-medium">Test</p>
+                <p className="text-white font-bold text-sm">{globalTestName}</p>
+                <p className="text-indigo-200 text-xs">Per-subject Max Marks</p>
+              </div>
+              <button onClick={closeMarksModal} className="text-white/70 hover:text-white text-3xl font-bold transition-colors leading-none">×</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {/* If test name is not set, show an inline prompt inside the modal */}
+              {!globalTestName.trim() && (
+                <div className="mb-5 p-4 bg-amber-50 border-2 border-amber-300 rounded-xl">
+                  <p className="text-sm font-bold text-amber-800 mb-2">⚠️ Enter a Test Name to save marks</p>
+                  <input
+                    type="text"
+                    placeholder="e.g. weekly test 1"
+                    autoFocus
+                    value={globalTestName}
+                    onChange={(e) => { setGlobalTestName(e.target.value); setModalError(''); }}
+                    className="w-full px-4 py-2.5 border-2 border-amber-400 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white font-semibold"
+                  />
+                </div>
+              )}
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm text-gray-500">Enter marks for each subject. Max marks apply per subject.</p>
+                <span className="text-xs font-bold bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full border border-indigo-200">
+                  🎓 {streamFilter === 'all' ? 'TECHNICAL (default)' : streamFilter}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {activeSubjects.map((subject) => {
+                  const val = modalScores[subject] ?? '';
+                  const maxS = getSubjectMaxScore(subject);
+                  const num = Number(val);
+                  const isOver = val !== '' && !isNaN(num) && num > maxS;
+                  const isValid = val !== '' && !isNaN(num) && num >= 0 && num <= maxS;
+                  return (
+                    <div key={subject} className={`rounded-xl border-2 p-4 transition-all ${isOver ? 'border-red-300 bg-red-50' : isValid ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:border-indigo-200'}`}>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">{subject}</label>
+                        <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Max: {maxS}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max={maxS}
+                          placeholder="—"
+                          value={val}
+                          onChange={(e) => setModalScores((prev) => ({ ...prev, [subject]: e.target.value }))}
+                          className={`flex-1 px-3 py-2.5 text-center text-lg font-bold rounded-lg border focus:outline-none focus:ring-2 transition-all ${isOver ? 'border-red-400 bg-red-50 text-red-700 focus:ring-red-300' : isValid ? 'border-green-400 bg-green-50 text-green-800 focus:ring-green-300' : 'border-gray-200 focus:border-indigo-400 focus:ring-indigo-200'}`}
+                        />
+                        <span className="text-sm text-gray-400 font-medium whitespace-nowrap">/ {maxS}</span>
+                      </div>
+                      {isOver && <p className="text-xs text-red-600 mt-1 font-semibold">Exceeds max score ({maxS})!</p>}
+                      {isValid && <p className="text-xs text-green-600 mt-1 font-medium">{Math.round((num / maxS) * 100)}%</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              {modalError && (
+                <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  <span>⚠️</span> <span>{modalError}</span>
+                </div>
+              )}
+              {modalOk && (
+                <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 font-bold">
+                  <span>✓</span> <span>Marks saved successfully!</span>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleSaveModalMarks}
+                  disabled={modalSaving || modalOk}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all shadow-sm ${modalSaving || modalOk ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
+                >
+                  {modalSaving ? '💾 Saving…' : modalOk ? '✓ Saved!' : '💾 Save All Marks'}
+                </button>
+                <button onClick={closeMarksModal} className="px-6 py-3 rounded-xl text-sm font-semibold border-2 border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2652,10 +3137,33 @@ function RemarksPage() {
         let imageUrl = null;
         const imgFile = imageById[s.id];
         if (imgFile) {
-          imageUrl = await uploadRemarkImage(imgFile, s.id);
+          try {
+            imageUrl = await uploadRemarkImage(imgFile, s.id);
+          } catch (imgErr) {
+            console.warn('Image upload skipped:', imgErr);
+          }
         }
 
-        await addStudentRemark({ studentId: s.id, type: backendType, message: finalMessage, imageUrl });
+        const remarkObj = {
+          type: backendType,
+          message: finalMessage,
+          by: auth.currentUser?.uid || 'portal',
+          date: new Date(),
+        };
+        if (imageUrl) remarkObj.imageUrl = imageUrl;
+
+        try {
+          await setDoc(
+            doc(db, 'students', s.id),
+            {
+              remarks: arrayUnion(remarkObj),
+              updatedAt: new Date(),
+            },
+            { merge: true }
+          );
+        } catch (dbErr) {
+          await addStudentRemark({ studentId: s.id, type: backendType, message: finalMessage, imageUrl });
+        }
       }
 
       setSaveOk(true);
