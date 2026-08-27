@@ -2111,11 +2111,15 @@ function ResultsPage() {
   // Toggle for Tests Cards view
   const [showTestsView, setShowTestsView] = useState(false);
   // Test detail view (opened by clicking a test card)
-  const [selectedTestDetail, setSelectedTestDetail] = useState(null); // aggregated test object
+  const [selectedTestDetail, setSelectedTestDetail] = useState(null);
   const [testDetailSubject, setTestDetailSubject] = useState(activeSubjects?.[0] || SUBJECT_OPTIONS[0]);
-  const [testDetailUnsaved, setTestDetailUnsaved] = useState({}); // { studentId: scoreStr }
+  const [testDetailUnsaved, setTestDetailUnsaved] = useState({});
   const [testDetailSaving, setTestDetailSaving] = useState(false);
-  const [deletingTestName, setDeletingTestName] = useState(''); // name of test pending delete confirm
+  const [deletingTestName, setDeletingTestName] = useState('');
+  const [pendingDate, setPendingDate] = useState(null);   // staged date awaiting confirmation
+  const [dateSaving, setDateSaving] = useState(false);
+  const [pendingName, setPendingName] = useState(null);   // staged name change awaiting confirmation
+  const [nameSaving, setNameSaving] = useState(false);
 
   // Student marks modal state
   const [marksModalStudent, setMarksModalStudent] = useState(null);
@@ -2250,7 +2254,10 @@ function ResultsPage() {
     if (!existingTest || !Array.isArray(existingTest.subjects)) return {};
     const result = {};
     existingTest.subjects.forEach((s) => {
-      if (s.subject) result[s.subject] = String(s.score !== undefined ? s.score : '');
+      if (s.subject) {
+        // Use 'ABSENT' sentinel if the student was marked absent for this subject
+        result[s.subject] = s.absent === true ? 'ABSENT' : String(s.score !== undefined ? s.score : '');
+      }
     });
     return result;
   };
@@ -2300,7 +2307,7 @@ function ResultsPage() {
     }
     // (Date conflicts are allowed — multiple tests can share the same date)
     for (const [subject, scoreRaw] of Object.entries(modalScores)) {
-      if (scoreRaw === '' || scoreRaw === undefined) continue;
+      if (scoreRaw === '' || scoreRaw === undefined || scoreRaw === 'ABSENT') continue; // skip absent
       const score = Number(scoreRaw);
       const maxS = getSubjectMaxScore(subject);
       if (isNaN(score) || score < 0) { setModalError(`Invalid score for ${subject}.`); return; }
@@ -2324,12 +2331,16 @@ function ResultsPage() {
         const scoreRaw = modalScores[subject];
         const subIndex = subjects.findIndex((s) => String(s.subject).toLowerCase() === subject.toLowerCase());
         const maxScore = getSubjectMaxScore(subject);
-        if (scoreRaw === '' || scoreRaw === undefined) {
+        if (scoreRaw === 'ABSENT') {
+          // Mark as absent — store with absent flag
+          const entry = { subject, absent: true, score: null, maxScore };
+          if (subIndex >= 0) { subjects[subIndex] = entry; } else { subjects.push(entry); }
+        } else if (scoreRaw === '' || scoreRaw === undefined) {
           if (subIndex >= 0) subjects.splice(subIndex, 1);
         } else {
           const score = Number(scoreRaw);
-          if (subIndex >= 0) { subjects[subIndex] = { ...subjects[subIndex], subject, score, maxScore }; }
-          else { subjects.push({ subject, score, maxScore }); }
+          const entry = { subject, score, maxScore, absent: false };
+          if (subIndex >= 0) { subjects[subIndex] = entry; } else { subjects.push(entry); }
         }
       }
       testObj.subjects = subjects;
@@ -2347,6 +2358,7 @@ function ResultsPage() {
 
   const getSubjectCount = (student) => {
     const existing = getExistingScoresForStudent(student);
+    // Count subjects that have a score OR are marked absent — both mean the student was recorded
     return Object.values(existing).filter((v) => v !== '').length;
   };
 
@@ -2356,7 +2368,10 @@ function ResultsPage() {
     const t = tests.find((x) => x.name.trim().toLowerCase() === testName.trim().toLowerCase());
     if (!t || !Array.isArray(t.subjects)) return '';
     const s = t.subjects.find((x) => String(x.subject).toLowerCase() === subject.toLowerCase());
-    return s && s.score !== undefined ? String(s.score) : '';
+    if (!s) return '';
+    // Return 'ABSENT' sentinel if the student was absent for this subject
+    if (s.absent === true) return 'ABSENT';
+    return s.score !== undefined ? String(s.score) : '';
   };
 
   // Save a single student score in the detail view
@@ -2382,11 +2397,15 @@ function ResultsPage() {
       const subIdx = subjects.findIndex((s) => String(s.subject).toLowerCase() === testDetailSubject.toLowerCase());
       if (val === '') {
         if (subIdx >= 0) subjects.splice(subIdx, 1);
+      } else if (val === 'ABSENT') {
+        // Mark as absent
+        const entry = { subject: testDetailSubject, absent: true, score: null, maxScore: subjectMax };
+        if (subIdx >= 0) { subjects[subIdx] = entry; } else { subjects.push(entry); }
       } else {
         const score = Number(val);
         if (!isNaN(score) && score >= 0 && score <= subjectMax) {
-          if (subIdx >= 0) { subjects[subIdx] = { ...subjects[subIdx], subject: testDetailSubject, score, maxScore: subjectMax }; }
-          else { subjects.push({ subject: testDetailSubject, score, maxScore: subjectMax }); }
+          const entry = { subject: testDetailSubject, score, maxScore: subjectMax, absent: false };
+          if (subIdx >= 0) { subjects[subIdx] = entry; } else { subjects.push(entry); }
         }
       }
       testObj.subjects = subjects;
@@ -2424,6 +2443,44 @@ function ResultsPage() {
       setDeletingTestName('');
     } catch (err) {
       alert('Error deleting test: ' + err.message);
+    }
+  };
+
+  // Helper: display date as DD-MM-YYYY
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return 'No Date';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    return dateStr;
+  };
+
+  // Rename a test across all students
+  const handleRenameTest = async (oldName, newName) => {
+    if (!newName.trim() || newName.trim().toLowerCase() === oldName.trim().toLowerCase()) {
+      setPendingName(null);
+      return;
+    }
+    setNameSaving(true);
+    try {
+      const updates = allStudents
+        .filter((s) => Array.isArray(s.weeklyTests) && s.weeklyTests.some((t) => t.name.trim().toLowerCase() === oldName.trim().toLowerCase()))
+        .map(async (s) => {
+          const newTests = s.weeklyTests.map((t) =>
+            t.name.trim().toLowerCase() === oldName.trim().toLowerCase()
+              ? { ...t, name: newName.trim() }
+              : t
+          );
+          await setDoc(doc(db, 'students', s.id), { weeklyTests: newTests }, { merge: true });
+          setAllStudents((prev) => prev.map((x) => x.id === s.id ? { ...x, weeklyTests: newTests } : x));
+        });
+      await Promise.all(updates);
+      setSelectedTestDetail((prev) => ({ ...prev, name: newName.trim() }));
+      if (globalTestName.trim().toLowerCase() === oldName.trim().toLowerCase()) setGlobalTestName(newName.trim());
+      setPendingName(null);
+    } catch (err) {
+      alert('Error renaming test: ' + err.message);
+    } finally {
+      setNameSaving(false);
     }
   };
 
@@ -2549,38 +2606,93 @@ function ResultsPage() {
               <div className="border-2 border-indigo-300 rounded-xl overflow-hidden shadow-md">
                 {/* Detail Header */}
                 <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-5 py-4 flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-white font-bold text-base">{selectedTestDetail.name}</h3>
-                    <div className="flex items-center gap-2 mt-1">
+                  <div className="flex-1 min-w-0">
+                    {/* Editable test name */}
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <input
+                        type="text"
+                        value={pendingName !== null ? pendingName : selectedTestDetail.name}
+                        onChange={(e) => setPendingName(e.target.value)}
+                        className="bg-white/20 text-white font-bold text-base border border-white/30 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-white/50 min-w-0 flex-1"
+                        title="Edit test name then confirm"
+                      />
+                      {pendingName !== null && pendingName.trim() !== selectedTestDetail.name.trim() && (
+                        <>
+                          <button
+                            disabled={nameSaving}
+                            onClick={() => handleRenameTest(selectedTestDetail.name, pendingName)}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-green-400 hover:bg-green-300 text-green-900 border border-green-300 transition-colors disabled:opacity-60"
+                          >
+                            {nameSaving ? '...' : '✓ Confirm'}
+                          </button>
+                          <button
+                            disabled={nameSaving}
+                            onClick={() => setPendingName(null)}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-colors"
+                          >
+                            ✕ Cancel
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
                       <span className="text-indigo-200 text-xs">📅</span>
+
+                      {/* Date input — stages a pending date, does NOT auto-save */}
                       <input
                         type="date"
-                        defaultValue={selectedTestDetail.date || ''}
-                        onChange={async (e) => {
-                          const newDate = e.target.value;
-                          if (!newDate) return;
-                          // Update date on all students who have this test
-                          try {
-                            const updates = allStudents
-                              .filter((s) => Array.isArray(s.weeklyTests) && s.weeklyTests.some((t) => t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()))
-                              .map(async (s) => {
-                                const newTests = s.weeklyTests.map((t) =>
-                                  t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()
-                                    ? { ...t, date: new Date(newDate + 'T00:00:00') }
-                                    : t
-                                );
-                                await setDoc(doc(db, 'students', s.id), { weeklyTests: newTests }, { merge: true });
-                                setAllStudents((prev) => prev.map((x) => x.id === s.id ? { ...x, weeklyTests: newTests } : x));
-                              });
-                            await Promise.all(updates);
-                            setSelectedTestDetail((prev) => ({ ...prev, date: newDate }));
-                          } catch (err) {
-                            alert('Error updating date: ' + err.message);
-                          }
-                        }}
+                        value={pendingDate !== null ? pendingDate : (selectedTestDetail.date || '')}
+                        onChange={(e) => setPendingDate(e.target.value)}
                         className="bg-white/20 text-white text-xs font-semibold border border-white/30 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
-                        title="Edit exam date"
+                        title="Select new date then confirm"
                       />
+
+                      {/* Pending date confirmation bar */}
+                      {pendingDate !== null && pendingDate !== selectedTestDetail.date && (
+                        <>
+                          <span className="text-yellow-300 text-[10px] font-bold bg-yellow-400/20 px-2 py-0.5 rounded border border-yellow-400/40">
+                            ⚠️ Unsaved date change
+                          </span>
+                          <button
+                            disabled={dateSaving}
+                            onClick={async () => {
+                              if (!pendingDate) return;
+                              setDateSaving(true);
+                              try {
+                                const updates = allStudents
+                                  .filter((s) => Array.isArray(s.weeklyTests) && s.weeklyTests.some((t) => t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()))
+                                  .map(async (s) => {
+                                    const newTests = s.weeklyTests.map((t) =>
+                                      t.name.trim().toLowerCase() === selectedTestDetail.name.trim().toLowerCase()
+                                        ? { ...t, date: new Date(pendingDate + 'T00:00:00') }
+                                        : t
+                                    );
+                                    await setDoc(doc(db, 'students', s.id), { weeklyTests: newTests }, { merge: true });
+                                    setAllStudents((prev) => prev.map((x) => x.id === s.id ? { ...x, weeklyTests: newTests } : x));
+                                  });
+                                await Promise.all(updates);
+                                setSelectedTestDetail((prev) => ({ ...prev, date: pendingDate }));
+                                setPendingDate(null);
+                              } catch (err) {
+                                alert('Error updating date: ' + err.message);
+                              } finally {
+                                setDateSaving(false);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-green-400 hover:bg-green-300 text-green-900 border border-green-300 transition-colors disabled:opacity-60"
+                          >
+                            {dateSaving ? '...' : '✓ Confirm'}
+                          </button>
+                          <button
+                            disabled={dateSaving}
+                            onClick={() => setPendingDate(null)}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-colors"
+                          >
+                            ✕ Cancel
+                          </button>
+                        </>
+                      )}
+
                       <span className="text-indigo-200 text-xs">• Max ({testDetailSubject}): {
                         (selectedTestDetail?.subjectMaxScores?.[testDetailSubject])
                           ? selectedTestDetail.subjectMaxScores[testDetailSubject]
@@ -2588,7 +2700,7 @@ function ResultsPage() {
                       }</span>
                     </div>
                   </div>
-                  <button onClick={() => { setSelectedTestDetail(null); setTestDetailUnsaved({}); }} className="text-white/70 hover:text-white text-2xl font-bold transition-colors leading-none ml-4">×</button>
+                  <button onClick={() => { setSelectedTestDetail(null); setTestDetailUnsaved({}); setPendingDate(null); setPendingName(null); }} className="text-white/70 hover:text-white text-2xl font-bold transition-colors leading-none ml-4">×</button>
                 </div>
 
                 {/* Subject selector pills */}
@@ -2672,37 +2784,58 @@ function ResultsPage() {
                           ? Number(selectedTestDetail.subjectMaxScores[testDetailSubject])
                           : Number(selectedTestDetail?.maxScore || 100);
                         return (
-                          <tr key={student.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
+                          <tr key={student.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'} ${val === 'ABSENT' ? 'bg-red-50/60' : ''}`}>
                             <td className="px-5 py-3 font-mono text-xs font-semibold text-gray-700">{student.admissionNumber || '—'}</td>
                             <td className="px-5 py-3 font-semibold text-gray-900">{student.name || '—'}</td>
                             <td className="px-5 py-3 text-gray-600 text-xs">{student.year || '1'} Yr • {getStudentStreamValue(student) || '—'}</td>
                             <td className="px-5 py-3">
-                              <div className="flex items-center justify-center gap-2">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max={currentDetailMax}
-                                  placeholder="Score"
-                                  value={val}
-                                  onChange={(e) => setTestDetailUnsaved((prev) => ({ ...prev, [student.id]: e.target.value }))}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDetailRow(student.id); }}
-                                  className={`w-24 px-3 py-2 text-center text-base font-semibold border-2 rounded-lg focus:outline-none focus:ring-2 transition-all ${
-                                    isUnsaved ? 'bg-amber-50 border-amber-400 text-amber-900 focus:ring-amber-200' : 'bg-blue-50/30 border-blue-200 text-blue-900 hover:border-blue-300 focus:ring-blue-100'
-                                  }`}
-                                />
-                                <span className="text-gray-400 text-xs">/ {currentDetailMax}</span>
-                              </div>
+                              {val === 'ABSENT' ? (
+                                <div className="flex items-center justify-center gap-2">
+                                  <span className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 font-extrabold text-xs border border-red-300 tracking-widest">🚫 ABSENT</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={currentDetailMax}
+                                    placeholder="Score"
+                                    value={val}
+                                    onChange={(e) => setTestDetailUnsaved((prev) => ({ ...prev, [student.id]: e.target.value }))}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDetailRow(student.id); }}
+                                    className={`w-24 px-3 py-2 text-center text-base font-semibold border-2 rounded-lg focus:outline-none focus:ring-2 transition-all ${
+                                      isUnsaved ? 'bg-amber-50 border-amber-400 text-amber-900 focus:ring-amber-200' : 'bg-blue-50/30 border-blue-200 text-blue-900 hover:border-blue-300 focus:ring-blue-100'
+                                    }`}
+                                  />
+                                  <span className="text-gray-400 text-xs">/ {currentDetailMax}</span>
+                                </div>
+                              )}
                             </td>
                             <td className="px-5 py-3">
-                              {isUnsaved && (
+                              <div className="flex items-center gap-2">
+                                {/* Absent toggle */}
                                 <button
-                                  onClick={() => handleSaveDetailRow(student.id)}
-                                  disabled={testDetailSaving}
-                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
+                                  onClick={() => {
+                                    const newVal = val === 'ABSENT' ? '' : 'ABSENT';
+                                    setTestDetailUnsaved((prev) => ({ ...prev, [student.id]: newVal }));
+                                  }}
+                                  className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                                    val === 'ABSENT' ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-red-50 text-red-500 border-red-200 hover:bg-red-100'
+                                  }`}
+                                  title={val === 'ABSENT' ? 'Clear absent' : 'Mark as absent'}
                                 >
-                                  💾 Save
+                                  🚫
                                 </button>
-                              )}
+                                {isUnsaved && (
+                                  <button
+                                    onClick={() => handleSaveDetailRow(student.id)}
+                                    disabled={testDetailSaving}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
+                                  >
+                                    💾 Save
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2740,7 +2873,7 @@ function ResultsPage() {
                           </button>
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500 mb-4 font-medium flex items-center gap-1"><span>📅</span> <span>{t.date || 'No Date'}</span></p>
+                      <p className="text-xs text-gray-500 mb-4 font-medium flex items-center gap-1"><span>📅</span> <span>{formatDisplayDate(t.date)}</span></p>
                       <div className="mb-4">
                         <span className="text-[10px] text-gray-400 block mb-1.5 uppercase tracking-wider font-bold">Subjects</span>
                         <div className="flex flex-wrap gap-1.5">
@@ -2926,31 +3059,76 @@ function ResultsPage() {
                   🎓 {streamFilter === 'all' ? 'TECHNICAL (default)' : streamFilter}
                 </span>
               </div>
+
+              {/* Mark All Absent / Clear All buttons */}
+              <div className="flex gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = {};
+                    activeSubjects.forEach((s) => { updated[s] = 'ABSENT'; });
+                    setModalScores(updated);
+                  }}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold bg-red-50 hover:bg-red-100 text-red-700 border-2 border-red-200 hover:border-red-400 transition-all flex items-center justify-center gap-1.5"
+                >
+                  🚫 Mark All Absent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = {};
+                    activeSubjects.forEach((s) => { updated[s] = ''; });
+                    setModalScores(updated);
+                  }}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold bg-gray-50 hover:bg-gray-100 text-gray-600 border-2 border-gray-200 hover:border-gray-400 transition-all flex items-center justify-center gap-1.5"
+                >
+                  ↩ Clear All
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {activeSubjects.map((subject) => {
                   const val = modalScores[subject] ?? '';
+                  const isAbsent = val === 'ABSENT';
                   const maxS = getSubjectMaxScore(subject);
                   const num = Number(val);
-                  const isOver = val !== '' && !isNaN(num) && num > maxS;
-                  const isValid = val !== '' && !isNaN(num) && num >= 0 && num <= maxS;
+                  const isOver = !isAbsent && val !== '' && !isNaN(num) && num > maxS;
+                  const isValid = !isAbsent && val !== '' && !isNaN(num) && num >= 0 && num <= maxS;
                   return (
-                    <div key={subject} className={`rounded-xl border-2 p-4 transition-all ${isOver ? 'border-red-300 bg-red-50' : isValid ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:border-indigo-200'}`}>
+                    <div key={subject} className={`rounded-xl border-2 p-4 transition-all ${isAbsent ? 'border-red-400 bg-red-50' : isOver ? 'border-red-300 bg-red-50' : isValid ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:border-indigo-200'}`}>
                       <div className="flex justify-between items-center mb-2">
-                        <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">{subject}</label>
-                        <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Max: {maxS}</span>
+                        <label className={`block text-xs font-bold uppercase tracking-wider ${isAbsent ? 'text-red-700' : 'text-gray-700'}`}>{subject}</label>
+                        <div className="flex items-center gap-2">
+                          {!isAbsent && <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Max: {maxS}</span>}
+                          {/* Absent toggle button */}
+                          <button
+                            type="button"
+                            onClick={() => setModalScores((prev) => ({ ...prev, [subject]: isAbsent ? '' : 'ABSENT' }))}
+                            className={`text-[10px] font-extrabold px-2 py-0.5 rounded border transition-all ${isAbsent ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-white text-red-500 border-red-300 hover:bg-red-50'}`}
+                            title={isAbsent ? 'Click to clear absent' : 'Mark as absent'}
+                          >
+                            🚫 {isAbsent ? 'ABSENT' : 'Absent'}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min="0"
-                          max={maxS}
-                          placeholder="—"
-                          value={val}
-                          onChange={(e) => setModalScores((prev) => ({ ...prev, [subject]: e.target.value }))}
-                          className={`flex-1 px-3 py-2.5 text-center text-lg font-bold rounded-lg border focus:outline-none focus:ring-2 transition-all ${isOver ? 'border-red-400 bg-red-50 text-red-700 focus:ring-red-300' : isValid ? 'border-green-400 bg-green-50 text-green-800 focus:ring-green-300' : 'border-gray-200 focus:border-indigo-400 focus:ring-indigo-200'}`}
-                        />
-                        <span className="text-sm text-gray-400 font-medium whitespace-nowrap">/ {maxS}</span>
-                      </div>
+                      {isAbsent ? (
+                        <div className="flex items-center justify-center h-11 rounded-lg border-2 border-red-300 bg-red-100">
+                          <span className="text-red-700 font-extrabold text-sm tracking-widest">ABSENT</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            max={maxS}
+                            placeholder="—"
+                            value={val}
+                            onChange={(e) => setModalScores((prev) => ({ ...prev, [subject]: e.target.value }))}
+                            className={`flex-1 px-3 py-2.5 text-center text-lg font-bold rounded-lg border focus:outline-none focus:ring-2 transition-all ${isOver ? 'border-red-400 bg-red-50 text-red-700 focus:ring-red-300' : isValid ? 'border-green-400 bg-green-50 text-green-800 focus:ring-green-300' : 'border-gray-200 focus:border-indigo-400 focus:ring-indigo-200'}`}
+                          />
+                          <span className="text-sm text-gray-400 font-medium whitespace-nowrap">/ {maxS}</span>
+                        </div>
+                      )}
                       {isOver && <p className="text-xs text-red-600 mt-1 font-semibold">Exceeds max score ({maxS})!</p>}
                       {isValid && <p className="text-xs text-green-600 mt-1 font-medium">{Math.round((num / maxS) * 100)}%</p>}
                     </div>
