@@ -65,10 +65,10 @@ const STREAM_OPTIONS = ['TECHNICAL', 'EAPCET', 'NDA', 'CEC', 'DEFENCE'];
 
 // Subjects per exam/stream for the Results (marks) page
 const STREAM_SUBJECTS = {
-  TECHNICAL: ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
-  CEC:       ['Sanskrit', 'Telugu', 'English', 'Political Science', 'Economics', 'Commerce'],
-  NDA:       ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry', 'GAT'],
-  EAPCET:    ['Sanskrit', 'Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
+  TECHNICAL: ['Sanskrit / Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
+  CEC:       ['Sanskrit / Telugu', 'English', 'Political Science', 'Economics', 'Commerce'],
+  NDA:       ['Sanskrit / Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry', 'GAT'],
+  EAPCET:    ['Sanskrit / Telugu', 'English', 'Maths A', 'Maths B', 'Physics', 'Chemistry'],
   DEFENCE:   ['Defence', 'Maths', 'General Science', 'English (Defence)', 'Arithmetic & Reasoning', 'GK'],
 };
 
