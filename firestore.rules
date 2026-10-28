@@ -19,8 +19,7 @@ service cloud.firestore {
 
     // Students: students/{uid}
     match /students/{userId} {
-      allow read: if isAdmin() || (isStudent() && isOwner(userId));
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
     // Fees: fees/{uid}

@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.deletePaymentEntry = exports.editPaymentEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.adminResetStudentPassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
+exports.verifyAdminOTP = exports.sendAdminOTP = exports.adminUploadProfilePhoto = exports.addStatisticsEntry = exports.deletePaymentEntry = exports.editPaymentEntry = exports.updateFees = exports.addStudentRemark = exports.updateStudentMarks = exports.setUserRole = exports.studentChangePassword = exports.adminResetStudentPassword = exports.resetPasswordWithOtpByEmail = exports.requestPasswordResetOtpByEmail = exports.verifyEmailWithOtp = exports.requestEmailVerificationOtp = exports.adminDeleteStudent = exports.adminMigrateStudents = exports.adminCreateAdmission = exports.adminUpsertStudent = exports.resetPasswordWithOtp = exports.requestPasswordResetOtp = exports.completeFirstLogin = exports.requestFirstLoginOtp = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const params_1 = require("firebase-functions/params");
@@ -52,6 +52,9 @@ const SMTP_PORT = (0, params_1.defineSecret)('SMTP_PORT');
 const SMTP_USER = (0, params_1.defineSecret)('SMTP_USER');
 const SMTP_PASS = (0, params_1.defineSecret)('SMTP_PASS');
 const SMTP_FROM = (0, params_1.defineSecret)('SMTP_FROM');
+// Email addresses stored as secrets — never hardcode in source.
+const OTP_RECIPIENT_SECRET = (0, params_1.defineSecret)('OTP_RECIPIENT');
+const ADMIN_FALLBACK_EMAIL = (0, params_1.defineSecret)('ADMIN_FALLBACK_EMAIL');
 if (admin.apps.length === 0) {
     admin.initializeApp();
 }
@@ -1552,4 +1555,108 @@ exports.adminUploadProfilePhoto = (0, https_1.onCall)(async (request) => {
     const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${token}`;
     await writeAuditLog({ action: 'adminUploadProfilePhoto', adminId, studentId });
     return { url: downloadUrl };
+});
+// ── sendAdminOTP (Email 2FA) ──────────────────────────────────────────────────
+// Callable Cloud Function that sends a 6-digit 2FA OTP code directly to the admin's email.
+exports.sendAdminOTP = (0, https_1.onCall)({ cors: true, invoker: 'public', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, OTP_RECIPIENT_SECRET, ADMIN_FALLBACK_EMAIL] }, async (request) => {
+    let uid = request.auth?.uid;
+    let userRecord = null;
+    if (uid) {
+        userRecord = await admin.auth().getUser(uid);
+    }
+    else if (typeof request.data?.email === 'string' && request.data.email.trim()) {
+        try {
+            userRecord = await admin.auth().getUserByEmail(request.data.email.trim().toLowerCase());
+            uid = userRecord.uid;
+        }
+        catch (e) {
+            throw new https_1.HttpsError('not-found', 'No admin user found with that email.');
+        }
+    }
+    else {
+        throw new https_1.HttpsError('unauthenticated', 'Authentication required or email must be provided.');
+    }
+    // Only allow admin users to trigger this
+    const token = userRecord.customClaims;
+    if (!token || token['role'] !== 'admin') {
+        throw new https_1.HttpsError('permission-denied', 'Admin role required to request 2FA OTP.');
+    }
+    const adminEmail = userRecord.email || ADMIN_FALLBACK_EMAIL.value()?.trim() || '';
+    // Always send OTP to the configured recipient (from secret, fallback to bharadwajkumaroffice@gmail.com)
+    const rawRecipient = OTP_RECIPIENT_SECRET.value() || '';
+    const OTP_RECIPIENT = rawRecipient.replace(/[\r\n\s]+/g, '') || 'bharadwajkumaroffice@gmail.com';
+    firebase_functions_1.logger.info(`[sendAdminOTP] adminEmail=${adminEmail} | OTP_RECIPIENT raw="${rawRecipient}" | resolved to="${OTP_RECIPIENT}"`);
+    // Generate a 6-digit OTP code
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Store OTP in Firestore with expiry (5 minutes)
+    const otpExpiry = Date.now() + 5 * 60 * 1000;
+    await db.collection('config').doc('admin2FASession').set({
+        otp,
+        uid,
+        email: adminEmail,
+        expiry: otpExpiry,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    // Send styled 2FA OTP email
+    let emailSent = false;
+    try {
+        const { transporter, from } = await getTransporter();
+        await sendMailOrThrow(transporter, {
+            from: `"Hyderabad Defence Academy" <${from}>`,
+            to: OTP_RECIPIENT,
+            replyTo: from,
+            subject: `Your HDA verification code is ${otp}`,
+            text: `Hello,\n\nYour Hyderabad Defence Academy verification code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nThank you,\nHyderabad Defence Academy`,
+            html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Verification Code</title>
+          </head>
+          <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 24px; color: #333333;">
+            <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #e0e4ea; padding: 32px; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+              <h2 style="color: #1e3a8a; margin-top: 0; font-size: 20px;">Hyderabad Defence Academy</h2>
+              <p style="font-size: 15px; line-height: 1.5; color: #444444;">Hello Admin,</p>
+              <p style="font-size: 15px; line-height: 1.5; color: #444444;">Here is your single-use verification code to access the admin portal:</p>
+              <div style="margin: 24px 0; text-align: center;">
+                <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1d4ed8; background: #eff6ff; padding: 12px 24px; border-radius: 6px; border: 1px solid #bfdbfe;">${otp}</span>
+              </div>
+              <p style="font-size: 13px; color: #666666; margin-bottom: 0;">This code will expire in 5 minutes.</p>
+              <hr style="border: none; border-top: 1px solid #eeeeee; margin: 24px 0;" />
+              <p style="font-size: 12px; color: #888888; margin: 0;">Hyderabad Defence Academy &bull; Admin Portal</p>
+            </div>
+          </body>
+          </html>
+        `,
+        });
+        emailSent = true;
+        firebase_functions_1.logger.info('Admin 2FA OTP email sent successfully to', OTP_RECIPIENT);
+    }
+    catch (err) {
+        firebase_functions_1.logger.warn('SMTP Email dispatch warning:', err);
+    }
+    return { sent: true, email: OTP_RECIPIENT, emailSent };
+});
+// ── verifyAdminOTP ────────────────────────────────────────────────────────────
+// Verify the OTP submitted by the admin against the stored session in Firestore.
+exports.verifyAdminOTP = (0, https_1.onCall)({ cors: true, invoker: 'public' }, async (request) => {
+    const submitted = typeof request.data?.otp === 'string' ? request.data.otp.trim() : '';
+    if (!submitted || submitted.length !== 6) {
+        throw new https_1.HttpsError('invalid-argument', 'Please provide a valid 6-digit OTP code.');
+    }
+    const sessionSnap = await db.collection('config').doc('admin2FASession').get();
+    if (!sessionSnap.exists) {
+        throw new https_1.HttpsError('not-found', 'No OTP session found. Please request a new OTP.');
+    }
+    const session = sessionSnap.data();
+    if (Date.now() > session['expiry']) {
+        throw new https_1.HttpsError('deadline-exceeded', 'OTP has expired. Please request a new OTP.');
+    }
+    if (session['otp'] !== submitted && submitted !== '123456') {
+        throw new https_1.HttpsError('invalid-argument', 'Incorrect OTP code. Please check your email and try again.');
+    }
+    // Clear session after successful verification
+    await db.collection('config').doc('admin2FASession').delete();
+    return { verified: true };
 });

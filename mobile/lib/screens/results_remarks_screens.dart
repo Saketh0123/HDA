@@ -15,15 +15,23 @@ class _WeeklyTest {
   final List<_TestSubject> subjects;
   const _WeeklyTest({required this.name, this.date, required this.subjects});
 
-  int get totalScore => subjects.fold(0, (s, e) => s + e.score);
+  // Score = sum of present subjects only; Max = sum of ALL subjects (absent = 0/maxScore)
+  int get totalScore => subjects.where((e) => !e.isAbsent).fold(0, (s, e) => s + e.score);
   int get totalMax => subjects.fold(0, (s, e) => s + e.maxScore);
   double get percent => totalMax > 0 ? totalScore / totalMax : 0.0;
+  bool get allAbsent => subjects.isNotEmpty && subjects.every((e) => e.isAbsent);
 }
 
 class _TestSubject {
   final String name;
   final int score, maxScore;
-  const _TestSubject({required this.name, required this.score, required this.maxScore});
+  final bool isAbsent;
+  const _TestSubject({
+    required this.name,
+    required this.score,
+    required this.maxScore,
+    this.isAbsent = false,
+  });
 }
 
 // ─── Results Screen ────────────────────────────────────────────────────────────
@@ -131,10 +139,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
         if (rawSubjects is List) {
           for (final s in rawSubjects) {
             if (s is! Map) continue;
+            final isAbsent = s['absent'] == true || s['score'] == null;
             subjects.add(_TestSubject(
               name: (s['subject'] as String?) ?? '',
-              score: _asInt(s['score']),
+              score: isAbsent ? 0 : _asInt(s['score']),
               maxScore: _asInt(s['maxScore'], fallback: 100),
+              isAbsent: isAbsent,
             ));
           }
         }
@@ -152,10 +162,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
       if (m is! Map) continue;
       final subj = (m['subject'] as String?) ?? '';
       if (subj.trim().isEmpty) continue;
+      final isAbsent = m['absent'] == true || m['score'] == null;
       subjects.add(_TestSubject(
         name: subj,
-        score: _asInt(m['score']),
+        score: isAbsent ? 0 : _asInt(m['score']),
         maxScore: _asInt(m['maxScore'], fallback: 100),
+        isAbsent: isAbsent,
       ));
     }
     if (subjects.isEmpty) return [];
@@ -505,26 +517,40 @@ class _WeeklyTestCardState extends State<_WeeklyTestCard> with SingleTickerProvi
               // Score summary
               Row(
                 children: [
-                  Text('${widget.test.totalScore}/${widget.test.totalMax}',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
-                  ),
+                  widget.test.allAbsent
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF4444).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFFF4444).withOpacity(0.4)),
+                        ),
+                        child: const Text('ABSENT',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFFCC1111), letterSpacing: 1.2),
+                        ),
+                      )
+                    : Text('${widget.test.totalScore}/${widget.test.totalMax}',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
+                      ),
                   const Spacer(),
-                  Text('$pct%',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: gradeColor),
-                  ),
+                  if (!widget.test.allAbsent)
+                    Text('$pct%',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: gradeColor),
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
               // Progress bar — color based on score
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  value: widget.test.percent,
-                  minHeight: 8,
-                  backgroundColor: AppTheme.borderColor,
-                  valueColor: AlwaysStoppedAnimation<Color>(barColor),
+              if (!widget.test.allAbsent)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: widget.test.percent,
+                    minHeight: 8,
+                    backgroundColor: AppTheme.borderColor,
+                    valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                  ),
                 ),
-              ),
               const SizedBox(height: 10),
               // Subject chips
               Wrap(
@@ -532,11 +558,21 @@ class _WeeklyTestCardState extends State<_WeeklyTestCard> with SingleTickerProvi
                 children: widget.test.subjects.take(3).map((s) => Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: widget.colorForSubject(s.name).withOpacity(0.08),
+                    color: s.isAbsent
+                      ? const Color(0xFFFF4444).withOpacity(0.10)
+                      : widget.colorForSubject(s.name).withOpacity(0.08),
                     borderRadius: BorderRadius.circular(999),
+                    border: s.isAbsent
+                      ? Border.all(color: const Color(0xFFFF4444).withOpacity(0.35))
+                      : null,
                   ),
-                  child: Text('${s.name}: ${s.score}/${s.maxScore}',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: widget.colorForSubject(s.name)),
+                  child: Text(
+                    s.isAbsent ? '${s.name}: Absent' : '${s.name}: ${s.score}/${s.maxScore}',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: s.isAbsent ? const Color(0xFFCC1111) : widget.colorForSubject(s.name),
+                    ),
                   ),
                 )).toList(),
               ),
@@ -656,11 +692,11 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                   top: headerH - overlap,
                   child: Row(
                     children: [
-                      Expanded(child: _MiniStat(value: '$pct%', label: 'Score')),
+                      Expanded(child: _MiniStat(value: test.allAbsent ? '—' : '$pct%', label: 'Score')),
                       const SizedBox(width: 12),
-                      Expanded(child: _MiniStat(value: grade, label: 'Grade')),
+                      Expanded(child: _MiniStat(value: test.allAbsent ? '—' : grade, label: 'Grade')),
                       const SizedBox(width: 12),
-                      Expanded(child: _MiniStat(value: '${test.totalScore}/${test.totalMax}', label: 'Marks')),
+                      Expanded(child: _MiniStat(value: test.allAbsent ? 'Absent' : '${test.totalScore}/${test.totalMax}', label: 'Marks')),
                     ],
                   ),
                 ),
@@ -682,22 +718,27 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 ...test.subjects.map((s) {
-                  final sPct = s.maxScore > 0 ? (s.score / s.maxScore) : 0.0;
+                  final sPct = s.isAbsent ? 0.0 : (s.maxScore > 0 ? (s.score / s.maxScore) : 0.0);
                   final sPctInt = (sPct * 100).round();
                   final sG = _grade(sPctInt);
-                  final sGColor = sPctInt >= 85
-                      ? AppTheme.successColor
-                      : sPctInt >= 60
-                          ? AppTheme.warningColor
-                          : AppTheme.alertColor;
-                  final subjectColor = colorForSubject(s.name);
+                  final sGColor = s.isAbsent
+                      ? const Color(0xFFCC1111)
+                      : sPctInt >= 85
+                          ? AppTheme.successColor
+                          : sPctInt >= 60
+                              ? AppTheme.warningColor
+                              : AppTheme.alertColor;
+                  final subjectColor = s.isAbsent ? const Color(0xFFCC1111) : colorForSubject(s.name);
                   return Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: AppTheme.white,
+                      color: s.isAbsent ? const Color(0xFFFFF0F0) : AppTheme.white,
                       borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-                      border: Border.all(color: AppTheme.borderColor, width: 0.8),
+                      border: Border.all(
+                        color: s.isAbsent ? const Color(0xFFFF4444).withOpacity(0.35) : AppTheme.borderColor,
+                        width: s.isAbsent ? 1.2 : 0.8,
+                      ),
                       boxShadow: const [AppTheme.shadowCard],
                     ),
                     child: Column(
@@ -711,50 +752,74 @@ class _WeeklyTestDetailScreen extends StatelessWidget {
                                 color: subjectColor.withOpacity(0.10),
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Icon(Icons.bookmark_border_rounded, color: subjectColor, size: 18),
+                              child: Icon(
+                                s.isAbsent ? Icons.cancel_outlined : Icons.bookmark_border_rounded,
+                                color: subjectColor, size: 18,
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(s.name,
-                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
-                              ),
-                            ),
-                            Text('${s.score}/${s.maxScore}',
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: sGColor.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(sG,
-                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: sGColor),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(999),
-                                child: LinearProgressIndicator(
-                                  value: sPct,
-                                  minHeight: 8,
-                                  backgroundColor: AppTheme.borderColor,
-                                  valueColor: AlwaysStoppedAnimation<Color>(sGColor),
+                                style: TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.w800,
+                                  color: s.isAbsent ? const Color(0xFFCC1111) : AppTheme.textPrimary,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Text('$sPctInt%',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sGColor),
-                            ),
+                            if (s.isAbsent)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFF4444).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(color: const Color(0xFFFF4444).withOpacity(0.4)),
+                                ),
+                                child: const Text('ABSENT',
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Color(0xFFCC1111), letterSpacing: 1.0),
+                                ),
+                              )
+                            else ...
+                            [
+                              Text('${s.score}/${s.maxScore}',
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: AppTheme.textPrimary),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: sGColor.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(sG,
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: sGColor),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
+                        if (!s.isAbsent) ...
+                        [
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: LinearProgressIndicator(
+                                    value: sPct,
+                                    minHeight: 8,
+                                    backgroundColor: AppTheme.borderColor,
+                                    valueColor: AlwaysStoppedAnimation<Color>(sGColor),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text('$sPctInt%',
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sGColor),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   );

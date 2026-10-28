@@ -168,13 +168,15 @@ class _HomeScreenState extends State<HomeScreen> {
               int testMax = 0;
               for (final s in rawSubjects) {
                 if (s is! Map) continue;
-                testScore += _asInt(s['score']);
+                // Max always includes ALL subjects; score only for present ones
+                final isAbsent = s['absent'] == true || s['score'] == null;
                 testMax += _asInt(s['maxScore'], fallback: 100);
+                if (!isAbsent) testScore += _asInt(s['score']);
               }
               if (testMax > 0) {
                 sumPercents += (testScore / testMax);
                 testCount++;
-                latestTest = t; // Since it's ordered, the last valid one is the latest
+                latestTest = t;
               }
             }
           }
@@ -184,16 +186,24 @@ class _HomeScreenState extends State<HomeScreen> {
         int latestScore = 0;
         int latestMax = 0;
         String latestName = 'Latest Marks';
+        bool latestAllAbsent = false;
 
         if (latestTest != null) {
           latestName = (latestTest['name'] as String?) ?? 'Latest Marks';
           final rawSubjects = latestTest['subjects'] as List;
+          int presentCount = 0;
           for (final s in rawSubjects) {
             if (s is Map) {
-              latestScore += _asInt(s['score']);
+              final isAbsent = s['absent'] == true || s['score'] == null;
+              // Always add to max (absent = 0 score, full max)
               latestMax += _asInt(s['maxScore'], fallback: 100);
+              if (!isAbsent) {
+                latestScore += _asInt(s['score']);
+                presentCount++;
+              }
             }
           }
+          latestAllAbsent = presentCount == 0 && rawSubjects.isNotEmpty;
         } else {
           // Fallback to legacy marks field
           final marksRaw = (student?['marks'] is List)
@@ -201,12 +211,19 @@ class _HomeScreenState extends State<HomeScreen> {
               : const <dynamic>[];
           if (marksRaw.isNotEmpty) {
             latestName = 'Latest Marks';
+            int presentCount = 0;
             for (final m in marksRaw) {
               if (m is Map) {
-                latestScore += _asInt(m['score']);
+                final isAbsent = m['absent'] == true || m['score'] == null;
+                // Always add to max
                 latestMax += _asInt(m['maxScore'], fallback: 100);
+                if (!isAbsent) {
+                  latestScore += _asInt(m['score']);
+                  presentCount++;
+                }
               }
             }
+            latestAllAbsent = presentCount == 0 && marksRaw.isNotEmpty;
             if (latestMax > 0) {
               sumPercents = (latestScore / latestMax);
               testCount = 1;
@@ -282,9 +299,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: Icons.menu_book_rounded,
                         gradient: AppTheme.headerGradient,
                         title: latestName,
-                        value: latestMax > 0 ? '$latestScore/$latestMax' : '—',
-                        footnote: latestMax > 0 ? '$latestPercent% score' : 'No marks yet',
-                        footnoteColor: latestMax > 0 ? AppTheme.successColor : AppTheme.textSecondary,
+                        value: latestAllAbsent
+                            ? 'Absent'
+                            : (latestMax > 0 ? '$latestScore/$latestMax' : '—'),
+                        footnote: latestAllAbsent
+                            ? 'Student was absent'
+                            : (latestMax > 0 ? '$latestPercent% score' : 'No marks yet'),
+                        footnoteColor: latestAllAbsent
+                            ? const Color(0xFFCC1111)
+                            : (latestMax > 0 ? AppTheme.successColor : AppTheme.textSecondary),
                       ),
                       const SizedBox(height: 28),
                       const _SectionLabel('Latest Remark'),
